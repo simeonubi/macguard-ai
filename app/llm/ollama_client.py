@@ -68,6 +68,20 @@ class OllamaClient:
         self.config = config or OllamaConfig.from_env()
         self.session = session or requests.Session()
 
+    def is_available(self) -> bool:
+        """
+        Check whether the local Ollama daemon is reachable and responding.
+        Uses a short 2.0s timeout to prevent UI freezes.
+        """
+        try:
+            resp = self.session.get(
+                f"{self.config.base_url}/api/tags",
+                timeout=min(2.0, self.config.timeout_seconds),
+            )
+            return resp.status_code == 200
+        except Exception:
+            return False
+
     def generate(
         self,
         system_prompt: str,

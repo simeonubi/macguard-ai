@@ -48,7 +48,7 @@ def render_settings_page() -> None:
     col1, col2 = st.columns(2)
 
     ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    ollama_model = os.getenv("OLLAMA_MODEL", "llama3")
+    ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")
 
     with col1:
         st.text_input("Ollama Base URL", value=ollama_url, disabled=True)

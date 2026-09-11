@@ -449,3 +449,117 @@ def test_ai_failure_cannot_modify_safety_state():
     assert ctx.recommendations[0].safety_status == initial_rec.safety_status
     assert ctx.recommendations[0].requires_approval is True
 
+
+def test_explain_candidate_safe_context_is_bounded():
+    """Verify that explain_candidate_safe creates a bounded context containing only
+
+    the target candidate and its recommendation, not unrelated candidates.
+    """
+    cand1 = StorageCandidate(
+        path="/Users/test/Library/Caches/target_app",
+        size_bytes=1024 * 1024 * 50,
+        category=StorageCategory.CACHE,
+        risk_level=RiskLevel.LOW,
+        confidence=0.95,
+        reason="Target cache candidate",
+        recommendation="Review target cache",
+    )
+    cand2 = StorageCandidate(
+        path="/Users/test/Documents/unrelated_large_file.iso",
+        size_bytes=1024 * 1024 * 1024 * 5,
+        category=StorageCategory.MEDIA,
+        risk_level=RiskLevel.MEDIUM,
+        confidence=0.90,
+        reason="Unrelated large file",
+        recommendation="Review large file",
+    )
+    rec1 = StorageRecommendation(
+        candidate=cand1,
+        action=RecommendationAction.REVIEW_FOR_CLEANUP,
+        rationale="Target rationale",
+        requires_approval=True,
+        safety_status=SafetyStatus.ELIGIBLE_FOR_REVIEW.value,
+        confidence=0.95,
+    )
+    rec2 = StorageRecommendation(
+        candidate=cand2,
+        action=RecommendationAction.MANUAL_REVIEW,
+        rationale="Unrelated rationale",
+        requires_approval=True,
+        safety_status=SafetyStatus.BLOCKED.value,
+        confidence=0.90,
+    )
+    multi_ctx = AnalysisContext(
+        scan_id="multi-scan-123",
+        scan_path="/Users/test",
+        total_scanned_items=2,
+        total_size_bytes=cand1.size_bytes + cand2.size_bytes,
+        candidates=[cand1, cand2],
+        recommendations=[rec1, rec2],
+        safety_summary={"LOW": 1, "MEDIUM": 1},
+    )
+
+    mock_client = MagicMock(spec=OllamaClient)
+    captured_user_prompts = []
+
+    def mock_generate(system_prompt, user_prompt):
+        captured_user_prompts.append(user_prompt)
+        return json.dumps({
+            "summary": "Target explanation summary",
+            "key_findings": [
+                {
+                    "path": cand1.path,
+                    "size_formatted": "50.00 MB",
+                    "category": "CACHE",
+                    "risk_level": "LOW",
+                    "action": "review_for_cleanup",
+                    "explanation": "Bounded target cache explanation.",
+                }
+            ],
+            "prioritized_findings": ["1. Review target cache"],
+            "user_guidance": "Review target cache safely.",
+            "warnings": [],
+        })
+
+    mock_client.generate.side_effect = mock_generate
+    service = ExplanationService(client=mock_client)
+
+    result = service.explain_candidate_safe(multi_ctx, cand1.path)
+
+    assert result["status"] == "AVAILABLE"
+    assert len(captured_user_prompts) == 1
+    prompt_sent = captured_user_prompts[0]
+
+    # Target candidate facts must be in the bounded prompt
+    assert cand1.path in prompt_sent
+    assert "Target cache candidate" in prompt_sent
+    assert "LOW" in prompt_sent
+    assert "CACHE" in prompt_sent
+
+    # Unrelated candidate MUST NOT be in the prompt sent to Ollama
+    assert cand2.path not in prompt_sent
+    assert "unrelated_large_file.iso" not in prompt_sent
+    assert "Unrelated large file" not in prompt_sent
+
+
+def test_ollama_client_is_available():
+    mock_session = MagicMock(spec=requests.Session)
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_session.get.return_value = mock_response
+
+    client = OllamaClient(session=mock_session)
+    assert client.is_available() is True
+
+    # Error status code
+    mock_response.status_code = 500
+    assert client.is_available() is False
+
+    # Connection error
+    mock_session.get.side_effect = requests.exceptions.ConnectionError("Offline")
+    assert client.is_available() is False
+
+    # Timeout
+    mock_session.get.side_effect = requests.exceptions.Timeout("Timeout")
+    assert client.is_available() is False
+

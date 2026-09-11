@@ -172,9 +172,25 @@ class ExplanationService:
         if match_cand:
             det_reason = match_cand.reason
 
+        matching_recs = [r for r in context.recommendations if r.candidate.path == candidate_path]
+        target_candidates = [match_cand] if match_cand else []
+
+        # Construct a bounded, candidate-focused context to eliminate unbounded multi-candidate prompt bloat
+        bounded_context = AnalysisContext(
+            scan_id=context.scan_id,
+            scan_path=context.scan_path,
+            total_scanned_items=context.total_scanned_items,
+            total_size_bytes=context.total_size_bytes,
+            candidates=target_candidates,
+            recommendations=matching_recs,
+            safety_summary=context.safety_summary,
+        )
+
         try:
-            explanation = self.explain(context, fallback_to_deterministic=False)
+            explanation = self.explain(bounded_context, fallback_to_deterministic=False)
             match_finding = next((f for f in explanation.key_findings if f.path == candidate_path), None)
+            if not match_finding and explanation.key_findings:
+                match_finding = explanation.key_findings[0]
             finding_text = match_finding.explanation if match_finding else det_reason
 
             return {

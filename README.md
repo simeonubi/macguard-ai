@@ -1,104 +1,181 @@
 # MacGuard AI
 
-A safety-first, agentic storage intelligence and management system for macOS.
+**Safety-first agentic storage intelligence for macOS.**
 
-MacGuard AI empowers macOS users to understand, analyze, and safely reclaim storage space without the risk of accidental data loss. Built on the core principle that **AI must never possess unsupervised filesystem deletion authority**, MacGuard decouples diagnostic intelligence from execution, enforcing deterministic safety policies, granular risk assessments, cryptographic HMAC-SHA256 authorizations, pre/post-mutation integrity checks, and mandatory human consent for every action.
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-FF4B4B?style=flat&logo=streamlit&logoColor=white)](https://streamlit.io/)
+[![Tests](https://img.shields.io/badge/Tests-592%20passed-success?style=flat&logo=pytest&logoColor=white)](TESTING.md)
+[![Security](https://img.shields.io/badge/Security%20Suite-73%20passed-success?style=flat)](SECURITY.md)
+[![Platform](https://img.shields.io/badge/Platform-macOS-000000?style=flat&logo=apple&logoColor=white)](README.md)
+[![Version](https://img.shields.io/badge/Version-1.1.0-blue?style=flat)](CHANGELOG.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat)](#-license)
 
-> **Status**: **Production Ready (v1.1.0)**  
-> Verified with **592/592 passing automated tests**, a dedicated **73-test security and safety suite**, **77 UI integration tests**, **32 performance and hardening tests**, zero permanent deletion primitives, zero shell execution, and 100% prompt injection resistance.
+MacGuard AI is a safety-first, agentic macOS storage intelligence platform designed to help users understand storage consumption, analyze developer environments, identify redundancy and duplicate clusters, track historical storage trends, and make informed cleanup decisions **without giving AI unrestricted filesystem authority**.
 
----
-
-## The Problem: Why Traditional Storage Cleaners Are Dangerous
-
-Traditional macOS cleanup utilities and emerging "AI cleaners" suffer from critical safety flaws:
-1. **Black-Box Heuristics:** Blindly purge directories matching generic names without understanding workspace or build context (e.g., deleting active developer `.venv` virtual environments, `node_modules`, Docker layers, or Xcode build caches without warning).
-2. **Hardcoded Permanent Deletion (`rm -rf`):** Direct invocation of irreversible deletion primitives (`rm`, `os.remove`, `unlink`). If a rule misfires, user or project data is permanently lost.
-3. **Unbounded AI Agents:** Emerging autonomous agents given arbitrary shell, terminal, or subprocess access create severe attack surfaces for prompt injection, hallucinated paths, and catastrophic accidental deletions.
-4. **Zero Auditability & Integrity:** No cryptographic authorization records or physical integrity snapshots exist to prove what was approved versus what was altered.
+> **AI is the advisor, not the authority.**  
+> MacGuard AI decouples diagnostic reasoning from execution authority: AI agents can inspect, explain, prioritize, and summarize filesystem telemetry, but they possess **zero authority to approve, move, or delete files**.
 
 ---
 
-## MacGuard AI's Human-Authority Architecture
+## ⚡ Why This Project is Different
 
-MacGuard AI flips this paradigm: **the AI agent can inspect, explain, summarize, and prioritize storage findings, but it cannot approve or execute cleanup.**
+Traditional storage cleanup utilities and emerging "autonomous AI cleaners" present severe data loss risks by combining black-box heuristics with unsupervised deletion primitives (`rm -rf`, `os.remove`, `unlink`). A single hallucinated path, ambiguous rule, or prompt injection can permanently destroy active developer environments, uncommitted code repositories, Docker containers, or personal documents.
 
-```mermaid
-graph TD
-    A[Whole-Home Scanner\nBounded Read-Only Discovery] --> B[Smart Categorizer & Developer Analyzer\n16 Categories & Build Artifacts]
-    B --> C[Duplicate & Redundancy Intelligence\nStreaming Hashes & Hardlinks]
-    B --> D[Storage History & Trends Engine\nPersistent SQLite Snapshots]
-    B --> E[Recommendation Engine\n6-Tier Action Priority Taxonomy]
-    D --> F[Advisory AI Agent\nAnalytical Read-Only Tools]
-    C --> E
-    E --> G[Human Review Interface\nExplicit Informed Consent]
-    G -->|Human Approval Only| H[HMAC-SHA256 Token\nSigned with Ephemeral 256-bit Key]
-    H --> I[Execution Planner\nDefense-in-Depth Validation]
-    I --> J[Pre-Execution Snapshot\nos.lstat + SHA-256 Checksum]
-    J --> K[Controlled Trash Executor\nMove Exclusively to ~/.Trash]
-    K --> L[Post-Move Verification\nDestination Exists & Source Absent]
-    L --> M[SQLite Audit & History Repository\nImmutable WAL Event Log]
+```text
+Traditional Cleanup Tool:
+User ─────────► Tool ─────────► Filesystem Mutation (Permanent Deletion)
+
+MacGuard AI Architecture:
+User ──► AI Intelligence ──► Recommendation ──► Human Review ──► HMAC Sign ──► Safety Validation ──► Controlled Trash ──► Verification ──► Audit
 ```
 
-### 🔒 Core Safety Invariants
+MacGuard AI replaces blind automation with a **formally verifiable, human-governed execution pipeline**:
 
-1. **Zero Permanent Deletion Primitives:** The codebase contains **zero** instances of `os.remove`, `os.unlink`, `Path.unlink`, `Path.rmdir`, `shutil.rmtree`, or shell `rm`. Mutations route exclusively to macOS Trash (`~/.Trash`).
-2. **Zero Subprocess / Shell Execution:** No `os.system`, `subprocess.Popen`, `subprocess.run`, or shell invocations exist in the entire application.
-3. **Zero-Authority AI Assistant:** The LLM (via local Ollama or deterministic fallback) is strictly read-only and advisory. It cannot approve, delete, move, or modify files.
-4. **Cryptographic HMAC-SHA256 Approvals:** Every human approval generates a tamper-evident token bound to canonical path, operation, risk level, and a 15-minute expiration using an isolated 256-bit runtime secret key (`ApprovalKeyManager`).
-5. **Pre- and Post-Mutation Physical Integrity Checks:** Exact file size, inode, modification time, and SHA-256 hashes are verified before and after moving to Trash.
-6. **Mandatory Explicit Human Approval (No "Approve All"):** Bulk approvals and auto-approvals are strictly prohibited. Users must individually inspect candidates and grant explicit consent.
-7. **Fail-Closed Mechanics:** Any integrity mismatch, symlink anomaly, expired approval token, or unknown risk immediately blocks execution safely.
+* **Human-in-the-Loop Sovereign Gate**: Cleanup requires conscious, per-item human confirmation with an Informed Consent declaration. Bulk "Approve All" actions are strictly prohibited.
+* **Deterministic Foundations Before AI**: All scanning, risk scoring, path allowlisting, duplicate detection, and execution logic are 100% deterministic Python code. The AI agent acts strictly as an advisory explainer.
+* **Cryptographic Authorization**: Approvals are sealed with runtime HMAC-SHA256 signatures bound to canonical path, operation, risk level, and a 15-minute expiration timestamp using an isolated 256-bit secret key (`ApprovalKeyManager`).
+* **Single-Use Replay Protection**: Tokens atomically transition `PENDING` $\rightarrow$ `APPROVED` $\rightarrow$ `CONSUMED`. Replay execution attempts fail closed.
+* **Zero Permanent Deletion Primitives**: The codebase contains **zero** occurrences of `os.remove`, `os.unlink`, `shutil.rmtree`, or shell `rm`. All operations route exclusively to macOS Trash (`~/.Trash`).
+* **Pre- & Post-Mutation Physical Integrity**: Snapshots of file size, inode, modification time, and SHA-256 hashes are verified before and after moving to Trash.
+* **Anti-Symlink & TOCTOU Defense**: Traversal and execution inspect filesystem items with non-following `os.lstat()`. Symlink swaps and path traversals fail closed immediately.
+* **Persistent Tamper-Evident Audit Logging**: All scanning, recommendation, approval, dry-run, execution, and verification events are recorded in a local WAL-mode SQLite database with zero secret leakage.
 
 ---
 
-## Four Canonical Operating Modes
+## 🛡️ Safety & Execution Architecture
 
-MacGuard AI provides four strictly segregated operating modes across its workflow:
+MacGuard AI enforces a linear, unidirectional security gating pipeline where discovery never equals authorization:
+
+```mermaid
+flowchart TD
+    A[Filesystem Discovery\nBounded Whole-Home Traversal] --> B[Storage Analysis\n21 Categories & Developer Tooling]
+    B --> C[Risk Assessment\nDeterministic Risk Tiers]
+    C --> D[Recommendation\n6-Tier Action Taxonomy]
+    D --> E[Human Review\nExplicit Informed Consent]
+    E --> F[HMAC Approval\nSigned 256-bit Runtime Key]
+    F --> G[Controlled Execution\nMove Exclusively to ~/.Trash]
+    G --> H[Integrity Verification\nPre/Post Byte-Exact SHA-256]
+    H --> I[Audit\nImmutable SQLite WAL Event Store]
+```
+
+### Fundamental Security Axiom
+$$\text{DISCOVERY} \neq \text{AUTHORIZATION} \neq \text{RECOMMENDATION} \neq \text{APPROVAL} \neq \text{EXECUTION}$$
+
+---
+
+## 🧭 Four Segregated Operating Modes
+
+MacGuard AI strictly isolates capabilities across four operating modes:
 
 ```text
 ┌─────────────────────────┐       ┌─────────────────────────┐       ┌─────────────────────────┐       ┌─────────────────────────┐
 │         ANALYZE         │       │          AGENT          │ ───>  │         REVIEW          │ ───>  │          CLEAN          │
 │       (Read-Only)       │       │    (Conversational AI)  │       │   (Human Confirmation)  │       │    (Controlled Trash)   │
 │  - ScanScope Discovery  │       │  - Analytical Tools     │       │  - Inspect Recs & Risk  │       │  - Integrity Validation │
-│  - 16 Smart Categories  │       │  - Trend & Delta Q&A    │       │  - Local AI Context     │       │  - Atomic Token Claim   │
+│  - 21 Smart Categories  │       │  - Trend & Delta Q&A    │       │  - Local AI Context     │       │  - Atomic Token Claim   │
 │  - Developer Artifacts  │       │  - Injection Defense    │       │  - Explicit HMAC Sign   │       │  - Move to ~/.Trash     │
 │  - Duplicate Explorer   │       │  - Zero Exec Authority  │       │  - ZERO Mutations       │       │  - Post-Move Verify     │
 │  - Storage History      │       │                         │       │                         │       │  - SQLite Audit Logging │
 └─────────────────────────┘       └─────────────────────────┘       └─────────────────────────┘       └─────────────────────────┘
 ```
 
-1. **`ANALYZE` (Read-Only Diagnostics)**: Evaluates mounted disk capacity, scans directory trees via bounded `ScanScope`, identifies large files, classifies items into 16 semantic categories, inspects developer tooling (`.venv`, `node_modules`, `DerivedData`, ML weights), detects duplicates, and records historical snapshots. Zero mutations occur.
-2. **`AGENT` (Conversational Intelligence)**: Interactive natural-language reasoning powered by local LLMs (Ollama) or deterministic fallback. Answers questions (*"What is consuming my storage?"*, *"How much did caches grow since last scan?"*, *"Which duplicate clusters waste the most space?"*) with strictly allowlisted, read-only diagnostic tools.
-3. **`REVIEW` (Human Confirmation & HMAC Gate)**: Presents flagged candidates with 6-tier risk badges, rationales, historical context, and parent-child hierarchy tracking. Users inspect findings, acknowledge the Informed Consent declaration, and generate single-use HMAC-SHA256 approval tokens.
-4. **`CLEAN` (Controlled Execution & Verification)**: Re-validates path allowlists, executes non-destructive Dry Run simulations, performs controlled moves to `~/.Trash`, verifies source absence and destination hash integrity, and records immutable SQLite audit logs.
+1. **`ANALYZE` (Read-Only Diagnostics)**: Evaluates mounted disk capacity, performs bounded traversal across user-selected `ScanScope`s, classifies items into 21 semantic categories with safe `UNKNOWN` fallback, inspects developer tooling, detects duplicate clusters, and records historical snapshots. Zero mutations occur.
+2. **`AGENT` (Conversational Intelligence)**: Multi-turn natural language assistant powered by local Ollama or deterministic fallback. Answers questions about storage growth, developer environments, duplicate clusters, and scan deltas using strictly allowlisted read-only analytical tools. Zero execution authority.
+3. **`REVIEW` (Human Confirmation & HMAC Gate)**: Translates findings into explainable recommendations with 6-tier risk badges, rationales, and parent-child container hierarchy deduplication. Users inspect findings, acknowledge Informed Consent, and generate single-use HMAC-SHA256 approval tokens.
+4. **`CLEAN` (Controlled Execution & Verification)**: Re-validates path allowlists, executes non-destructive Dry Run simulations, performs verified moves to `~/.Trash`, verifies destination hash integrity, and records immutable SQLite audit records.
 
 ---
 
-## Implemented Streamlit UI Views
+## 🚀 Key Feature Areas
+
+### 🔍 Storage Intelligence
+* **Bounded Whole-Home Discovery**: High-performance filesystem walker using bounded min-heaps (`heapq`), `ScanScope` configurations (`HOME`, `DEV`, `APP_DATA`, `CACHE`, `CUSTOM`), and strict `TraversalLimits` (depth bounds, item caps, timeouts).
+* **Smart Categorization Registry**: Deterministic 21-category classification engine (`CACHES`, `LOGS`, `BUILD_ARTIFACTS`, `PACKAGE_MANAGERS`, `VIRTUAL_ENVIRONMENTS`, `CONTAINERS`, `DISK_IMAGES`, `ML_AI_DATA`, `ARCHIVES`, `DOCUMENTS`, `DOWNLOADS`, `DESKTOP`, `PICTURES`, `MOVIES`, `MUSIC`, `MEDIA`, `DEVELOPER_DATA`, `APPLICATIONS`, `TEMPORARY_DATA`, `SYSTEM_DATA`, `USER_DATA`) with confidence scoring and safe `UNKNOWN` fallback.
+* **Large File Intelligence**: Outlier detection and size ranking for large files across bounded scopes without loading large files into memory.
+
+### 👨💻 Developer Storage Intelligence
+* **Developer Artifact Analysis**: Specialized breakdown of Xcode `DerivedData`, Docker container layers and disk images, Python `.venv` virtual environments, Node `node_modules`, Rust `target` builds, and local ML model caches (Hugging Face, Ollama, PyTorch).
+* **Project Association**: Automatic detection of project root manifests (`package.json`, `pyproject.toml`, `Cargo.toml`, `.git`) to contextualize build artifacts.
+* **Staleness & Staleness Indicators**: Calculates access times, build ages, and staleness to differentiate active working environments from abandoned build caches.
+* **Logical vs. Physical Storage Accounting**: Accurately differentiates logical directory sizes from physical APFS space allocations.
+
+### 🧬 Duplicate & Redundancy Intelligence
+* **Multi-Stage Duplicate Detection**: Streaming two-stage hashing algorithm (size grouping ➔ 4KB partial header hash ➔ full SHA-256 verification) for zero-memory-spike duplicate discovery.
+* **APFS Hardlink Recognition**: Detects shared physical inodes (`st_nlink > 1`, identical `(st_dev, st_ino)`), correctly accounting for hardlinks as **zero additional wasted bytes**.
+* **Reclaimable-Byte Estimation**: Computes true potential physical space reclamation across duplicate clusters without misclassifying hardlinks.
+* **Evidence-Only Invariant**: Duplicate detection provides diagnostic evidence only; it never creates independent deletion authority.
+
+### 📊 Storage History & Trends
+* **Persistent Storage Snapshots**: Stores multi-scan snapshots in a local SQLite database (Schema v2: `scan_snapshots`, `category_history`, `top_consumer_snapshots`).
+* **Category Growth Velocity**: Tracks growth and shrinkage trends over time with velocity badges (`GROWING`, `SHRINKING`, `STABLE`).
+* **Scan-to-Scan Comparisons**: Instant delta analysis comparing current storage utilization against previous scans to catch disk leaks early.
+
+### 🤖 Advisory Agentic Intelligence
+* **Conversational Storage Reasoner**: Natural-language assistant equipped with 12 allowlisted, read-only analytical tools:
+  - `get_storage_overview`
+  - `get_storage_candidates`
+  - `get_candidate_details`
+  - `get_category_summary`
+  - `get_large_files`
+  - `get_recommendations`
+  - `get_audit_summary`
+  - `get_safety_policies`
+  - `get_storage_trends`
+  - `compare_scans`
+  - `get_duplicate_summary`
+  - `get_developer_storage_summary`
+* **Prompt Injection Defenses**: Multi-layer input validation, regex sanitization, untrusted telemetry delimiter wrapping (`<storage_analysis_data>`), and output bounds scanning.
+* **Resilient Local AI & Offline Fallback**: Connects to local [Ollama](https://ollama.ai) (`llama3.2` / `mistral`) for contextual explanations, automatically degrading to rule-based rationales if Ollama is offline or times out (>30s).
+* **Zero Authority Rule**: The agent has **zero mutation tools, zero approval authority, zero deletion primitives, and zero access to HMAC keys**.
+
+
+---
+
+## 🖥️ Streamlit Web Application Views
 
 The Streamlit web interface provides 10 dedicated views with two-phase navigation synchronization:
 
-* **📊 Dashboard**: Executive capacity gauges, disk utilization percentages, actionable reclaimable totals, and primary workflow launchpads.
-* **🔍 Scan Storage**: Granular storage scanning via configurable `ScanScope`, interactive Altair charts for category distributions (MB/GB) and risk tiers, and readable largest-consumer tables.
-* **📦 Developer Storage**: Dedicated inspector for Xcode, Docker, Python virtualenvs, Node modules, Rust target caches, and ML model weights with project associations and staleness indicators.
-* **👥 Duplicate Explorer**: Deduplicated cluster view, APFS hardlink badges, zero-wasted-byte indicators, and streaming SHA-256 analysis.
-* **📈 Storage Intelligence & History**: Multi-scan historical snapshots, trend delta indicators (`GROWING`, `SHRINKING`, `STABLE`), and top storage growth insights.
-* **💡 Recommendations**: Explainable findings using the 6-tier action priority taxonomy, hierarchy deduplication, and on-demand Local AI explanations with offline deterministic fallback.
-* **🛡️ Human Review**: Informed Consent confirmation, candidate inspection cards, individual approval buttons, and clear queue separation for eligible, manual-caution, and safety-blocked items.
-* **🗑️ Controlled Execution**: Real-time safety lifecycle banner (`Review ➔ Approve ➔ Dry Run ➔ Controlled Trash ➔ Integrity Verification ➔ Audit`), non-destructive Dry Run simulations, and verified Trash execution.
-* **🤖 AI Agent**: Chat interface with capability boundary indicators, quick analytical prompts, and conversational storage analysis.
-* **📜 Audit Log**: Searchable, filterable event viewer displaying cryptographic timestamps, approval IDs, actions, and integrity verification statuses.
-* **⚙️ Settings**: System diagnostics, non-disableable safety policy guarantees, and runtime engine health.
+| View | Purpose | Mode |
+|---|---|:---:|
+| **📊 Dashboard** | Executive capacity gauges, disk utilization percentages, actionable reclaimable totals, and primary workflow launchpads. | `ANALYZE` |
+| **🔍 Scan Storage** | Granular storage scanning via configurable `ScanScope`, interactive Altair category/risk charts, and largest-consumer tables. | `ANALYZE` |
+| **📦 Developer Storage** | Dedicated inspector for Xcode, Docker, Python virtualenvs, Node modules, Rust targets, and ML model caches. | `ANALYZE` |
+| **👥 Duplicate Explorer** | Deduplicated cluster view, APFS hardlink badges, zero-wasted-byte indicators, and streaming SHA-256 analysis. | `ANALYZE` |
+| **📈 Storage Intelligence & History** | Multi-scan historical snapshots, trend delta indicators (`GROWING`, `SHRINKING`, `STABLE`), and top storage growth insights. | `ANALYZE` |
+| **💡 Recommendations** | Explainable findings using the 6-tier action taxonomy, container deduplication, and on-demand local AI explanations. | `REVIEW` |
+| **🛡️ Human Review** | Informed Consent confirmation, candidate inspection cards, individual approval buttons, and queue separation. | `REVIEW` |
+| **🗑️ Controlled Execution** | Real-time safety lifecycle banner, non-destructive Dry Run simulation, and verified Trash execution. | `CLEAN` |
+| **🤖 AI Agent** | Conversational storage reasoner with capability boundary indicators, quick analytical prompts, and trend summaries. | `AGENT` |
+| **📜 Audit Log** | Searchable, filterable event viewer displaying cryptographic timestamps, approval IDs, actions, and integrity verification statuses. | `ANALYZE` |
+| **⚙️ Settings** | System diagnostics, non-disableable safety policy guarantees, and runtime engine health. | `ANALYZE` |
 
 ---
 
-## Installation & Setup
+## 🔒 12 Core Security Invariants
+
+| # | Invariant | Enforcement Mechanism |
+|---|---|---|
+| **1** | **Zero Permanent Deletion Primitives** | Codebase contains **zero** instances of `os.remove`, `os.unlink`, `Path.unlink`, `Path.rmdir`, `shutil.rmtree`, or shell `rm`. All mutations route exclusively to macOS Trash (`~/.Trash`). |
+| **2** | **Zero Subprocess / Shell Execution** | No `os.system`, `subprocess.Popen`, `subprocess.run`, or shell invocations exist in the entire application. |
+| **3** | **Zero Agent Mutation Authority** | The AI agent can inspect, explain, summarize, and prioritize storage findings. It cannot approve or execute cleanup. |
+| **4** | **Mandatory Human Approval** | Implicit, conversational, or bulk ("Approve All") authorizations are strictly prohibited. Every item requires conscious, individual human confirmation. |
+| **5** | **Cryptographic HMAC-SHA256 Authorization** | Every approval is cryptographically signed using an ephemeral 256-bit runtime secret key (`ApprovalKeyManager`) binding canonical path, operation, risk level, and expiration. |
+| **6** | **Strict Single-Use Replay Protection** | Tokens atomically transition from `PENDING` $\rightarrow$ `APPROVED` $\rightarrow$ `CONSUMED`. Re-execution of a consumed token is immediately blocked. |
+| **7** | **Allowlist & Denylist Boundary Enforcement** | Mutations are confined to explicit allowlisted cache and log roots (`~/Library/Caches`, `~/Library/Logs`, `~/.cache`, `DerivedData`). System roots and user documents are permanently blocked. |
+| **8** | **Anti-Symlink Traversal Protection** | File operations inspect targets using `os.lstat()`. Symlinks are strictly prohibited from being followed or targeted for mutation. |
+| **9** | **Time-of-Check to Time-of-Use (TOCTOU) Protection** | Pre-execution verification re-evaluates the target allowlist, file existence, inode, size, and SHA-256 hash immediately prior to moving. |
+| **10** | **Pre/Post Physical Integrity Verification** | Byte-exact SHA-256 hash digests are verified before and after moving to Trash. Content mismatch results in immediate failure. |
+| **11** | **Controlled Trash Destination** | All moves target uniquely segregated subdirectories inside `~/.Trash/MacGuard_<approval_id>_<token>`. |
+| **12** | **Persistent Tamper-Evident Audit Logging** | All scanning, recommendation, approval, dry-run, execution, and verification events are recorded in a local WAL-mode SQLite database with zero secret leakage. |
+
+---
+
+## 🛠️ Installation & Setup
 
 ### Prerequisites
-* macOS 12.0+ (Apple Silicon or Intel)
-* Python 3.11 or later
-* Git
+* **macOS 12.0+** (Apple Silicon or Intel)
+* **Python 3.11** or later
+* **Git**
 * *(Optional)* [Ollama](https://ollama.ai) with `llama3.2` or `mistral` for local natural-language explanations (MacGuard operates 100% offline if Ollama is absent).
 
 ### 1. Clone the Repository
@@ -120,13 +197,13 @@ pip install -r requirements.txt
 
 ---
 
-## Running MacGuard AI
+## 💻 Running MacGuard AI
 
 ### 1. Interactive Streamlit Web Interface (Canonical Launcher)
 ```bash
 streamlit run streamlit_app.py
 ```
-Or run headlessly on port 8501:
+Or run headlessly:
 ```bash
 .venv/bin/python -m streamlit run streamlit_app.py --server.headless true --server.port 8501
 ```
@@ -149,7 +226,7 @@ python -m app.cli --audit
 
 ---
 
-## Presentation Demo Dataset (Zero-Risk Live Demo)
+## 🧪 Presentation Demo Dataset (Zero-Risk Live Demo)
 
 MacGuard AI includes a built-in synthetic dataset generator for live presentations, code walkthroughs, and portfolio demonstrations without touching real personal files:
 1. Open the web interface at `http://localhost:8501`.
@@ -158,61 +235,102 @@ MacGuard AI includes a built-in synthetic dataset generator for live presentatio
 
 ---
 
-## Test Suite & Quality Assurance
+## 🧪 Test Suite & Quality Assurance
 
 The codebase is validated by **592 automated tests** covering security, fuzzing, UI state lifecycle, performance benchmarking, and real filesystem execution:
 
 ```bash
 # Run full automated test suite (592 tests)
-.venv/bin/python -m pytest -q
+PYTHONPATH=. .venv/bin/pytest
 
-# Run dedicated security & integrity suite (73 tests)
-.venv/bin/python -m pytest \
-  tests/test_execution_security.py \
-  tests/test_agent_security.py \
-  tests/test_mutation_guard.py \
+# Run dedicated security & safety suite (73 tests)
+PYTHONPATH=. .venv/bin/pytest \
   tests/test_safety.py \
-  tests/test_path_fuzzing.py \
-  tests/test_trash_executor.py \
+  tests/test_agent_security.py \
+  tests/test_execution_security.py \
+  tests/test_mutation_guard.py \
   tests/test_integrity.py \
-  tests/test_sandbox_final_validation.py -v
+  tests/test_path_fuzzing.py \
+  tests/test_sandbox_final_validation.py \
+  tests/test_trash_executor.py -v
 
 # Run UI integration test suite (77 tests)
-.venv/bin/python -m pytest tests/test_ui_v11.py tests/test_storage_intelligence_ui.py tests/test_ui_integration.py -v
+PYTHONPATH=. .venv/bin/pytest \
+  tests/test_ui_v11.py \
+  tests/test_storage_intelligence_ui.py \
+  tests/test_ui_integration.py -v
 
 # Run performance & hardening suite (32 tests)
-.venv/bin/python -m pytest tests/test_performance_v11.py tests/test_performance_benchmarks.py -v
+PYTHONPATH=. .venv/bin/pytest \
+  tests/test_performance_v11.py \
+  tests/test_performance_benchmarks.py -v
 ```
 
-### Test Coverage Highlights
-* **Security & Safety Invariant Suite (73 tests)**: TOCTOU symlink race attacks (Scenarios A–F), path traversal escapes, unicode normalization fuzzing, concurrent approval claim protection, single-use token consumption, and runtime secret key isolation.
-* **Performance & Hardening Suite (32 tests)**: Memory footprint profiling ($<150\text{ MB}$ RSS, $<50\text{ MB}$ heap across 10k items), cooperative cancellation ($<100\text{ ms}$ latency), symlink loop defense, and 10 adversarial prompt injection attack vectors.
-* **UI & State Lifecycle Suite (77 tests)**: Navigation synchronization, widget lifecycle safety, zero-bound Altair charts, path redaction, and error resilience.
-* **Real-World Sandbox Validation**: Automated end-to-end acceptance testing across all safety gates.
+### Static AST Safety Scan
+Run the repository's static AST safety scan to verify zero dangerous primitives across `app/`:
+```bash
+python3 -c '
+import ast, os, sys
+violations = []
+for root, _, files in os.walk("app"):
+    for f in files:
+        if f.endswith(".py"):
+            path = os.path.join(root, f)
+            with open(path, "r", encoding="utf-8") as fp:
+                tree = ast.parse(fp.read(), filename=path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name == "subprocess":
+                            violations.append((path, node.lineno, "import subprocess"))
+                elif isinstance(node, ast.ImportFrom):
+                    if node.module and "subprocess" in node.module:
+                        violations.append((path, node.lineno, f"from {node.module}"))
+                if isinstance(node, ast.Call):
+                    if isinstance(node.func, ast.Name):
+                        if node.func.id in ("eval", "exec", "compile"):
+                            violations.append((path, node.lineno, f"{node.func.id}()"))
+                    elif isinstance(node.func, ast.Attribute):
+                        attr = node.func.attr
+                        if attr in ("unlink", "rmdir", "system", "popen"):
+                            if isinstance(node.func.value, ast.Name) and node.func.value.id == "os":
+                                violations.append((path, node.lineno, f"os.{attr}()"))
+                        if attr == "rmtree":
+                            violations.append((path, node.lineno, "shutil.rmtree()"))
+                    for kw in node.keywords:
+                        if kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                            violations.append((path, node.lineno, "shell=True"))
+if violations:
+    print(f"FAILED: Found {len(violations)} safety violations")
+    sys.exit(1)
+else:
+    print("SUCCESS: 0 forbidden dangerous primitives found across app/")
+'
+```
 
 ---
 
-## Current Scope & Limitations
+## ⚠️ Current Scope & Limitations
 
 * **macOS Focused**: Tailored specifically for macOS directory structures (`~/Library/Caches`, `~/Library/Logs`, `~/.Trash`, Xcode `DerivedData`, APFS hardlinks).
 * **Controlled Trash Only**: Permanent deletion is permanently omitted by design. Reclaimed items remain in `~/.Trash` until the user manually empties Trash via Finder.
-* **Cleanup Authority Narrower Than Analysis**: MacGuard analyzes storage broadly across disk mounts, but cleanup permissions are strictly confined to allowlisted cache and temporary build directories. Personal user files (`Documents`, `Desktop`, `Downloads`, `Pictures`, `Movies`, `Music`) and core system paths (`/System`, `/Applications`, `/usr`, `/Library`) are permanently blocked from automated cleanup.
+* **Cleanup Authority Narrower Than Analysis**: MacGuard analyzes storage broadly across disk mounts via `ScanScope`, but cleanup permissions are strictly confined to allowlisted cache and temporary build directories. Personal user files (`Documents`, `Desktop`, `Downloads`, `Pictures`, `Movies`, `Music`) and core system paths (`/System`, `/Applications`, `/usr`, `/Library`) are permanently blocked from automated cleanup.
 * **Local Ollama is Optional**: Natural language explanation features use local Ollama when available, but automatically fall back to deterministic rule-based rationales with zero loss of functionality if Ollama is offline or times out.
 
 ---
 
-## Documentation Index
+## 📚 Documentation Index
 
-* [**ARCHITECTURE.md**](ARCHITECTURE.md): Full system architecture, component breakdown, data flow, and cryptographic models.
-* [**SECURITY.md**](SECURITY.md): Formal security philosophy, threat boundaries, 12 core security invariants, and fail-closed policies.
-* [**USER_GUIDE.md**](USER_GUIDE.md): End-to-end user manual for all 4 operating modes, Dry Run simulation, and Trash recovery.
-* [**TESTING.md**](TESTING.md): Comprehensive test hierarchy, 592-test suite breakdown, and test commands.
+* [**ARCHITECTURE.md**](ARCHITECTURE.md): Full system architecture, component breakdown, data flow, SQLite Schema v2, and cryptographic models.
+* [**SECURITY.md**](SECURITY.md): Formal security policy, threat boundaries (T1–T29), 12 core security invariants, and fail-closed policies.
+* [**USER_GUIDE.md**](USER_GUIDE.md): End-to-end user manual for all 4 operating modes, 10 UI views, Dry Run simulation, and Trash recovery.
+* [**TESTING.md**](TESTING.md): Comprehensive test hierarchy, 592-test suite breakdown, verification commands, and health checks.
 * [**DEMO.md**](DEMO.md): 3–5 minute presentation and interview demonstration script with Developer Storage, Trends, and Duplicates.
 * [**SAFETY.md**](SAFETY.md): Safety specification, operating mode isolation, and recommendation taxonomy.
 * [**CHANGELOG.md**](CHANGELOG.md): Complete milestone history including v1.1.0 release notes.
 
 ---
 
-## License
+## 📄 License
 
 MIT License. Designed with safety, user sovereignty, and transparency at its core.

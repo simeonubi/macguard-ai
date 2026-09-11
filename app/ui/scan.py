@@ -255,7 +255,7 @@ def render_scan_page() -> None:
 
                 st.success(
                     f"✅ Scan completed successfully! Found {len(candidates)} candidate items "
-                    f"totaling {format_bytes_decimal(total_bytes)} of analyzed storage."
+                    f"totaling {format_bytes_decimal(total_bytes)} in candidate inventory."
                 )
 
             except Exception as e:
@@ -280,10 +280,18 @@ def render_scan_page() -> None:
             st.metric("Storage Candidates", len(candidates))
         with col3:
             total_size = sum(c.size_bytes for c in candidates)
-            st.metric("Total Candidate Size", format_bytes_decimal(total_size))
+            st.metric(
+                "Candidate Inventory",
+                format_bytes_decimal(total_size),
+                help="Sum of all candidate records in inventory, which may contain parent and nested sub-item sizes.",
+            )
         with col4:
             eligible_size = sum(c.size_bytes for c in candidates if c.risk_level == RiskLevel.LOW)
-            st.metric("Eligible for Review", format_bytes_decimal(eligible_size))
+            st.metric(
+                "Eligible for Review",
+                format_bytes_decimal(eligible_size),
+                help="Total size of low-risk items eligible for human review and safe cleanup.",
+            )
 
         tab_table, tab_charts, tab_next = st.tabs(["📋 Candidate Table", "📊 Storage Visualizations", "👉 Next Steps"])
 

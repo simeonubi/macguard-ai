@@ -708,3 +708,96 @@ def test_chart_does_not_connect_incompatible_scope_measurements():
         assert "Run another scan later with the same scope" in mock_info.call_args[0][0]
         mock_chart.assert_not_called()
 
+
+def test_user_home_chart_strictly_excludes_root_scans_when_multiple_home_scans_exist():
+    """Verify that a User Home chart with multiple valid home scans strictly excludes a 474 GB root scan."""
+    snap_root = StorageSnapshot(
+        snapshot_id="snap-root",
+        scan_id="scan-root",
+        timestamp=1700000000.0,
+        scope_id=ScopeIdentifier.CUSTOM,
+        root_path="/",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=5.0,
+        files_count=10000,
+        directories_count=1000,
+        total_bytes=474_000_000_000,
+    )
+    snap_home1 = StorageSnapshot(
+        snapshot_id="snap-home-1",
+        scan_id="scan-home-1",
+        timestamp=1700086400.0,
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=1.0,
+        files_count=100,
+        directories_count=10,
+        total_bytes=9_290_000_000,
+    )
+    snap_home2 = StorageSnapshot(
+        snapshot_id="snap-home-2",
+        scan_id="scan-home-2",
+        timestamp=1700172800.0,
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=1.1,
+        files_count=105,
+        directories_count=10,
+        total_bytes=9_300_000_000,
+    )
+
+    with patch("streamlit.altair_chart") as mock_chart, patch("streamlit.info") as mock_info:
+        render_storage_history_chart(
+            [snap_home2, snap_home1, snap_root],
+            target_scope=ScopeIdentifier.HOME,
+            target_root="/Users/mac",
+        )
+        assert mock_chart.called
+        chart_obj = mock_chart.call_args[0][0]
+        # Inspect chart data to ensure root scan is excluded
+        data = chart_obj.data
+        assert len(data) == 2
+        # Max storage in charted data is ~9.30 GB, never 474 GB
+        assert all(row["Storage_GB"] < 15.0 for _, row in data.iterrows())
+        assert not mock_info.called
+
+
+def test_custom_scans_of_different_roots_remain_strictly_isolated():
+    """Verify that different custom root paths (e.g. '/' vs '/Users/mac/Projects') never mix in charts."""
+    snap_root = StorageSnapshot(
+        snapshot_id="snap-root",
+        scan_id="scan-root",
+        timestamp=1700000000.0,
+        scope_id=ScopeIdentifier.CUSTOM,
+        root_path="/",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=5.0,
+        files_count=10000,
+        directories_count=1000,
+        total_bytes=249_000_000_000,
+    )
+    snap_projects = StorageSnapshot(
+        snapshot_id="snap-projects",
+        scan_id="scan-projects",
+        timestamp=1700086400.0,
+        scope_id=ScopeIdentifier.CUSTOM,
+        root_path="/Users/mac/Projects",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=1.0,
+        files_count=500,
+        directories_count=50,
+        total_bytes=15_000_000_000,
+    )
+
+    with patch("streamlit.info") as mock_info, patch("streamlit.altair_chart") as mock_chart:
+        render_storage_history_chart(
+            [snap_projects, snap_root],
+            target_scope=ScopeIdentifier.CUSTOM,
+            target_root="/Users/mac/Projects",
+        )
+        # Should show info because only 1 snapshot matches '/Users/mac/Projects'
+        assert mock_info.called
+        assert "Run another scan later with the same scope" in mock_info.call_args[0][0]
+        assert not mock_chart.called

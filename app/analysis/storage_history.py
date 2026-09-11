@@ -377,26 +377,21 @@ class StorageHistoryRepository:
         scope_id: ScopeIdentifier,
         root_path: Optional[str] = None,
     ) -> Optional[StorageSnapshot]:
-        """Retrieve the most recent snapshot for a given scope."""
-        clauses = ["scope_id = ?"]
-        params: list[Union[str, int, float]] = [scope_id.value]
-        if root_path is not None:
-            clauses.append("root_path = ?")
-            params.append(root_path)
-
-        where_sql = " AND ".join(clauses)
+        """Retrieve the most recent snapshot for a given scope and optional normalized root path."""
+        norm_root = os.path.normpath(str(root_path)) if root_path is not None else None
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
                 cursor.execute(
-                    f"SELECT snapshot_id FROM storage_snapshots WHERE {where_sql} ORDER BY timestamp DESC LIMIT 1",
-                    tuple(params),
+                    "SELECT snapshot_id, root_path FROM storage_snapshots WHERE scope_id = ? ORDER BY timestamp DESC",
+                    (scope_id.value,),
                 )
-                row = cursor.fetchone()
-                if row is None:
-                    return None
-                return self._fetch_full_snapshot(conn, "snapshot_id = ?", (row["snapshot_id"],))
+                rows = cursor.fetchall()
+                for row in rows:
+                    if norm_root is None or os.path.normpath(row["root_path"]) == norm_root:
+                        return self._fetch_full_snapshot(conn, "snapshot_id = ?", (row["snapshot_id"],))
+                return None
             finally:
                 self._close_connection(conn)
 
@@ -406,27 +401,29 @@ class StorageHistoryRepository:
     ) -> Optional[StorageSnapshot]:
         """
         Retrieve the latest comparable snapshot recorded prior to the given snapshot.
+        Matches exact scope_id and normalized root_path.
         """
+        curr_norm_root = os.path.normpath(str(current_snapshot.root_path))
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT snapshot_id FROM storage_snapshots
-                    WHERE scope_id = ? AND root_path = ? AND timestamp < ?
-                    ORDER BY timestamp DESC LIMIT 1
+                    SELECT snapshot_id, root_path FROM storage_snapshots
+                    WHERE scope_id = ? AND timestamp < ?
+                    ORDER BY timestamp DESC
                     """,
                     (
                         current_snapshot.scope_id.value,
-                        current_snapshot.root_path,
                         current_snapshot.timestamp,
                     ),
                 )
-                row = cursor.fetchone()
-                if row is None:
-                    return None
-                return self._fetch_full_snapshot(conn, "snapshot_id = ?", (row["snapshot_id"],))
+                rows = cursor.fetchall()
+                for row in rows:
+                    if os.path.normpath(row["root_path"]) == curr_norm_root:
+                        return self._fetch_full_snapshot(conn, "snapshot_id = ?", (row["snapshot_id"],))
+                return None
             finally:
                 self._close_connection(conn)
 
@@ -436,30 +433,25 @@ class StorageHistoryRepository:
         limit: int = 50,
         root_path: Optional[str] = None,
     ) -> List[StorageSnapshot]:
-        """Retrieve historical snapshots in descending chronological order."""
-        clauses = ["scope_id = ?"]
-        params: list[Union[str, int, float]] = [scope_id.value]
-        if root_path is not None:
-            clauses.append("root_path = ?")
-            params.append(root_path)
-
-        where_sql = " AND ".join(clauses)
-        params.append(limit)
-
+        """Retrieve historical snapshots in descending chronological order matching exact scope and root_path."""
+        norm_root = os.path.normpath(str(root_path)) if root_path is not None else None
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
                 cursor.execute(
-                    f"SELECT snapshot_id FROM storage_snapshots WHERE {where_sql} ORDER BY timestamp DESC LIMIT ?",
-                    tuple(params),
+                    "SELECT snapshot_id, root_path FROM storage_snapshots WHERE scope_id = ? ORDER BY timestamp DESC",
+                    (scope_id.value,),
                 )
                 rows = cursor.fetchall()
                 snapshots: List[StorageSnapshot] = []
                 for row in rows:
-                    snap = self._fetch_full_snapshot(conn, "snapshot_id = ?", (row["snapshot_id"],))
-                    if snap is not None:
-                        snapshots.append(snap)
+                    if norm_root is None or os.path.normpath(row["root_path"]) == norm_root:
+                        snap = self._fetch_full_snapshot(conn, "snapshot_id = ?", (row["snapshot_id"],))
+                        if snap is not None:
+                            snapshots.append(snap)
+                            if len(snapshots) >= limit:
+                                break
                 return snapshots
             finally:
                 self._close_connection(conn)

@@ -101,7 +101,7 @@ def render_storage_intelligence_view(
         ScopeIdentifier.USER_CACHES: "⚡ User Caches",
         ScopeIdentifier.DOWNLOADS: "📥 Downloads Directory",
         ScopeIdentifier.DOCUMENTS: "📄 Documents Directory",
-        ScopeIdentifier.CUSTOM: "📁 Custom Directory",
+        ScopeIdentifier.CUSTOM: "📁 Custom / Comprehensive Scope",
     }
 
     selected_scope = st.selectbox(
@@ -112,9 +112,46 @@ def render_storage_intelligence_view(
         key="storage_intelligence_scope_select",
     )
 
+    # Determine canonical root path for the selected scope
+    import os
+    from pathlib import Path
+
+    if selected_scope == ScopeIdentifier.HOME:
+        canonical_root = os.path.normpath(str(Path.home().resolve()))
+    elif selected_scope == ScopeIdentifier.DEVELOPER:
+        canonical_root = os.path.normpath(str(Path.home().resolve() / "Projects"))
+    elif selected_scope == ScopeIdentifier.USER_CACHES:
+        canonical_root = os.path.normpath(str(Path.home().resolve() / "Library" / "Caches"))
+    elif selected_scope == ScopeIdentifier.DOWNLOADS:
+        canonical_root = os.path.normpath(str(Path.home().resolve() / "Downloads"))
+    elif selected_scope == ScopeIdentifier.DOCUMENTS:
+        canonical_root = os.path.normpath(str(Path.home().resolve() / "Documents"))
+    elif selected_scope == ScopeIdentifier.CUSTOM:
+        if root_path is not None:
+            canonical_root = os.path.normpath(str(root_path))
+        else:
+            custom_choice = st.radio(
+                "Custom Scope Target:",
+                options=["System Root (Comprehensive)", "Custom Specific Directory Path"],
+                index=0,
+                horizontal=True,
+                key="storage_intelligence_custom_choice",
+            )
+            if custom_choice == "System Root (Comprehensive)":
+                canonical_root = "/"
+            else:
+                user_custom_path = st.text_input(
+                    "Target Directory Path",
+                    value=str(Path.home()),
+                    key="storage_intelligence_custom_path",
+                )
+                canonical_root = os.path.normpath(str(Path(user_custom_path).expanduser().resolve()))
+    else:
+        canonical_root = os.path.normpath(str(root_path or Path.home().resolve()))
+
     try:
         snapshots: List[StorageSnapshot] = history_repo.get_snapshot_history(
-            selected_scope, limit=90, root_path=root_path
+            selected_scope, limit=90, root_path=canonical_root
         )
     except Exception as exc:
         st.error("Storage history database is temporarily unavailable. Please run a new scan to initialize history.")
@@ -181,7 +218,7 @@ def render_storage_intelligence_view(
     st.markdown("---")
 
     # 6. Storage Usage Over Time Chart
-    render_storage_history_chart(snapshots)
+    render_storage_history_chart(snapshots, target_scope=selected_scope, target_root=canonical_root)
 
     st.markdown("---")
 
@@ -314,19 +351,27 @@ def render_whats_growing(
             st.rerun()
 
 
-def render_storage_history_chart(snapshots: List[StorageSnapshot]) -> None:
+def render_storage_history_chart(
+    snapshots: List[StorageSnapshot],
+    target_scope: Optional[ScopeIdentifier] = None,
+    target_root: Optional[str] = None,
+) -> None:
     """Render historical storage utilization line/area chart using Altair."""
     st.markdown("#### 📊 **Storage Usage Over Time**")
 
     if not snapshots:
         return
 
-    # Filter snapshots to only those sharing the same scope_id and root_path as the latest snapshot,
-    # preventing visual connection of incompatible scope/root measurements.
-    target_scope = snapshots[0].scope_id
-    target_root = snapshots[0].root_path
+    # Filter snapshots to only those sharing the exact scope_id and canonical root_path,
+    # strictly preventing visual connection of incompatible scope/root measurements.
+    import os
+
+    effective_scope = target_scope if target_scope is not None else snapshots[0].scope_id
+    effective_root = os.path.normpath(str(target_root)) if target_root is not None else os.path.normpath(str(snapshots[0].root_path))
+
     compatible_snapshots = [
-        s for s in snapshots if s.scope_id == target_scope and s.root_path == target_root
+        s for s in snapshots
+        if s.scope_id == effective_scope and os.path.normpath(str(s.root_path)) == effective_root
     ]
 
     if len(compatible_snapshots) < 2:
@@ -369,13 +414,13 @@ def render_storage_history_chart(snapshots: List[StorageSnapshot]) -> None:
             x=alt.X("Date:N", title="Scan Date / Time", sort=None, axis=alt.Axis(labelAngle=-25)),
             y=alt.Y(
                 "Storage_GB:Q",
-                title="Storage (GB)",
+                title="Analyzed Storage (GB)",
                 scale=alt.Scale(domainMin=0, zero=True),
                 axis=alt.Axis(tickMinStep=1),
             ),
             tooltip=[
                 alt.Tooltip("Date:N", title="Scan Time"),
-                alt.Tooltip("Formatted_Size:N", title="Storage Size"),
+                alt.Tooltip("Formatted_Size:N", title="Analyzed Storage"),
                 alt.Tooltip("Files:Q", title="Total Files"),
             ],
         )

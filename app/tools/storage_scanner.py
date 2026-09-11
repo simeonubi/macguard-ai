@@ -11,6 +11,16 @@ from app.models.scan_result import DiscoveredItem, ScanResult, ScanStatus
 from app.models.scan_scope import ScanScope, TraversalLimits
 
 
+SYSTEM_RECURSION_PRUNED_PATHS: tuple[str, ...] = (
+    "/System/Volumes",
+    "/Volumes",
+    "/dev",
+    "/.vol",
+    "/.nofollow",
+    "/cores",
+)
+
+
 @dataclass
 class DiskUsage:
     """Represents disk usage information."""
@@ -68,14 +78,20 @@ class StorageScanner:
             free_bytes=free,
         )
 
-    def get_directory_size(self, path: str) -> int:
+    def get_directory_size(
+        self,
+        path: str,
+        visited_inodes: Optional[set[tuple[int, int]]] = None,
+    ) -> int:
         """
         Calculate the total size of a directory.
 
         Permission errors and inaccessible files are skipped.
+        Prunes APFS duplicate mount points (/System/Volumes, /Volumes)
+        and prevents physical double-counting using inode tracking.
         """
-
         total_size = 0
+        seen = visited_inodes if visited_inodes is not None else set()
 
         try:
             for root, directories, files in os.walk(
@@ -84,12 +100,22 @@ class StorageScanner:
                 onerror=lambda _: None,
                 followlinks=False,
             ):
-                # Prevent traversal into symbolic links.
-                directories[:] = [
-                    directory
-                    for directory in directories
-                    if not os.path.islink(os.path.join(root, directory))
-                ]
+                # Prevent traversal into symbolic links and duplicate APFS volume mounts
+                pruned_dirs = []
+                for directory in directories:
+                    dir_path = os.path.join(root, directory)
+                    if os.path.islink(dir_path):
+                        continue
+                    canonical = os.path.normpath(dir_path)
+                    if (
+                        canonical in SYSTEM_RECURSION_PRUNED_PATHS
+                        or canonical.endswith("/System/Volumes")
+                        or (os.path.basename(root) == "System" and directory == "Volumes")
+                        or (root == "/" and directory in ("Volumes", "dev", ".vol", ".nofollow", "cores"))
+                    ):
+                        continue
+                    pruned_dirs.append(directory)
+                directories[:] = pruned_dirs
 
                 for filename in files:
                     file_path = os.path.join(root, filename)
@@ -98,7 +124,12 @@ class StorageScanner:
                         if os.path.islink(file_path):
                             continue
 
-                        total_size += os.path.getsize(file_path)
+                        st = os.lstat(file_path)
+                        node = (st.st_dev, st.st_ino)
+                        if node in seen:
+                            continue
+                        seen.add(node)
+                        total_size += st.st_size
 
                     except (OSError, PermissionError):
                         continue
@@ -115,26 +146,30 @@ class StorageScanner:
     ) -> list[StorageItem]:
         """
         Return the largest immediate directories inside path.
+        Prunes virtual system and mount directories on root scans.
         """
-
         results: list[StorageItem] = []
+        is_root = os.path.abspath(path) == "/"
+        skip_root_names = {"Volumes", "dev", "cores", ".vol", ".nofollow"}
 
         try:
             with os.scandir(path) as entries:
                 for entry in entries:
                     if not entry.is_dir(follow_symlinks=False):
                         continue
+                    if is_root and (entry.name in skip_root_names or entry.name.startswith(".")):
+                        continue
 
                     try:
                         size = self.get_directory_size(entry.path)
-
-                        results.append(
-                            StorageItem(
-                                path=entry.path,
-                                size_bytes=size,
-                                item_type="directory",
+                        if size > 0 or not is_root:
+                            results.append(
+                                StorageItem(
+                                    path=entry.path,
+                                    size_bytes=size,
+                                    item_type="directory",
+                                )
                             )
-                        )
 
                     except (OSError, PermissionError):
                         continue
@@ -158,6 +193,7 @@ class StorageScanner:
         Find the largest files underneath a directory using a bounded min-heap.
 
         This is a read-only operation with O(limit) memory footprint.
+        Prunes APFS duplicate volume mirrors (/System/Volumes, /Volumes).
         """
         if limit <= 0:
             return []
@@ -174,11 +210,21 @@ class StorageScanner:
             onerror=lambda _: None,
             followlinks=False,
         ):
-            directories[:] = [
-                directory
-                for directory in directories
-                if not os.path.islink(os.path.join(root, directory))
-            ]
+            pruned_dirs = []
+            for directory in directories:
+                dir_path = os.path.join(root, directory)
+                if os.path.islink(dir_path):
+                    continue
+                canonical = os.path.normpath(dir_path)
+                if (
+                    canonical in SYSTEM_RECURSION_PRUNED_PATHS
+                    or canonical.endswith("/System/Volumes")
+                    or (os.path.basename(root) == "System" and directory == "Volumes")
+                    or (root == "/" and directory in ("Volumes", "dev", ".vol", ".nofollow", "cores"))
+                ):
+                    continue
+                pruned_dirs.append(directory)
+            directories[:] = pruned_dirs
 
             for filename in files:
                 file_path = os.path.join(root, filename)
@@ -227,6 +273,8 @@ class StorageScanner:
         - follow_symlinks=False (never follows symlinks by default)
         - stay_on_filesystem=True (device st_dev boundary enforcement)
         - Canonical sensitive directory exclusions
+        - APFS duplicate volume and firmlink namespace pruning (/System/Volumes, /Volumes)
+        - Inode tracking to prevent double-counting physical files
 
         This operation is STRICTLY READ-ONLY and grants ZERO mutation authority.
         """
@@ -281,6 +329,7 @@ class StorageScanner:
         # Worklist: (current_directory_path, current_depth)
         worklist: list[tuple[Path, int]] = [(root_path, 0)]
         visited_dirs: set[tuple[int, int]] = {(root_st_dev, root_st.st_ino)}
+        visited_files: set[tuple[int, int]] = set()
 
         items: list[DiscoveredItem] = []
         files_count = 0
@@ -293,6 +342,9 @@ class StorageScanner:
         excluded_entries_count = 0
         skipped_entries_count = 0
         status = ScanStatus.COMPLETED
+
+        is_root_scan = str(root_path) == "/"
+        skip_root_names = {"Volumes", "dev", "cores", ".vol", ".nofollow"}
 
         while worklist:
             if active_limits.is_cancelled():
@@ -325,6 +377,18 @@ class StorageScanner:
                             break
 
                         entries_count += 1
+
+                        # Prune system recursion boundaries and duplicate mount points
+                        canonical_path = os.path.normpath(entry.path)
+                        if (
+                            canonical_path in SYSTEM_RECURSION_PRUNED_PATHS
+                            or canonical_path.endswith("/System/Volumes")
+                            or (os.path.basename(current_dir) == "System" and entry.name == "Volumes")
+                            or (is_root_scan and (entry.name in skip_root_names or entry.name.startswith(".")))
+                        ):
+                            excluded_entries_count += 1
+                            skipped_entries_count += 1
+                            continue
 
                         # Sensitive subpath exclusion
                         if scope.is_path_excluded(entry.path):
@@ -394,12 +458,15 @@ class StorageScanner:
                                 worklist.append((Path(entry.path), current_depth + 1))
                         else:
                             files_count += 1
-                            size = st.st_size
-                            total_bytes += size
+                            file_node = (st.st_dev, st.st_ino)
+                            if file_node not in visited_files:
+                                visited_files.add(file_node)
+                                total_bytes += st.st_size
+
                             items.append(
                                 DiscoveredItem(
                                     path=entry.path,
-                                    size_bytes=size,
+                                    size_bytes=st.st_size,
                                     item_type="file",
                                     depth=current_depth + 1,
                                     mtime=st.st_mtime,

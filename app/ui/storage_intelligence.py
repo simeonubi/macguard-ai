@@ -240,7 +240,12 @@ def render_overview_cards(
                 delta_color="inverse" if report.overall_trend.absolute_change > 0 else "normal",
             )
         else:
-            st.metric(label=comparison_label, value="—", help="No previous comparable scan available.")
+            help_text = (
+                "The previous scan used a different scope, so MacGuard will not interpret the difference as storage growth or shrinkage."
+                if prev is not None
+                else "No previous comparable scan available."
+            )
+            st.metric(label=comparison_label, value="—", help=help_text)
 
     with col3:
         if report.is_comparable:
@@ -248,6 +253,12 @@ def render_overview_cards(
                 label="Trend Classification",
                 value=report.overall_trend.direction.value.title(),
                 help=report.overall_trend.explanation,
+            )
+        elif prev is not None:
+            st.metric(
+                label="Trend Classification",
+                value="No Comparable Baseline",
+                help="The previous scan used a different scope, so MacGuard will not interpret the difference as storage growth or shrinkage.",
             )
         else:
             st.metric(label="Trend Classification", value="First Baseline", help="Need at least 2 scans to classify trend.")
@@ -307,12 +318,23 @@ def render_storage_history_chart(snapshots: List[StorageSnapshot]) -> None:
     """Render historical storage utilization line/area chart using Altair."""
     st.markdown("#### 📊 **Storage Usage Over Time**")
 
-    if len(snapshots) < 2:
-        st.info("Run another scan later to compare storage usage over time on this chart.")
+    if not snapshots:
+        return
+
+    # Filter snapshots to only those sharing the same scope_id and root_path as the latest snapshot,
+    # preventing visual connection of incompatible scope/root measurements.
+    target_scope = snapshots[0].scope_id
+    target_root = snapshots[0].root_path
+    compatible_snapshots = [
+        s for s in snapshots if s.scope_id == target_scope and s.root_path == target_root
+    ]
+
+    if len(compatible_snapshots) < 2:
+        st.info("Run another scan later with the same scope to compare storage usage over time on this chart.")
         return
 
     # Prepare chronologically sorted dataframe
-    chronological = sorted(snapshots, key=lambda s: s.timestamp)
+    chronological = sorted(compatible_snapshots, key=lambda s: s.timestamp)
     chart_data = []
     for s in chronological:
         chart_data.append(

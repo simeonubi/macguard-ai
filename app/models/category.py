@@ -11,10 +11,11 @@ Categorization is strictly informational and grants zero cleanup or mutation aut
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.analysis.models import StorageCategory
+if TYPE_CHECKING:
+    from app.analysis.models import StorageCategory
 
 
 class ConfidenceLevel(str, Enum):
@@ -60,6 +61,7 @@ class SmartCategory(str, Enum):
         """
         Map rich v1.1 SmartCategory to v1.0 base StorageCategory for backwards compatibility.
         """
+        from app.analysis.models import StorageCategory
         mapping = {
             SmartCategory.CACHES: StorageCategory.CACHE,
             SmartCategory.LOGS: StorageCategory.LOGS,

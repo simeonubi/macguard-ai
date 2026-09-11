@@ -103,8 +103,8 @@ def render_scan_page() -> None:
                             continue
 
                 elif scan_scope == "System Root & Home Directory (Comprehensive)":
-                    scope_id = ScopeIdentifier.HOME
-                    root_path = str(Path.home())
+                    scope_id = ScopeIdentifier.CUSTOM
+                    root_path = "/"
                     home_dir = str(Path.home())
                     dirs = scanner.get_top_directories(path="/", limit=top_dirs_limit)
                     files = scanner.get_large_files(path=home_dir, limit=top_files_limit)
@@ -255,7 +255,7 @@ def render_scan_page() -> None:
 
                 st.success(
                     f"✅ Scan completed successfully! Found {len(candidates)} candidate items "
-                    f"totaling {format_bytes_decimal(total_bytes)} of unique storage."
+                    f"totaling {format_bytes_decimal(total_bytes)} of analyzed storage."
                 )
 
             except Exception as e:

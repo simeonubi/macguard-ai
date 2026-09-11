@@ -624,3 +624,87 @@ def test_dynamic_comparison_label_wording(sample_snapshots):
         assert "Change Since Baseline" in labels
 
 
+def test_overview_cards_incompatible_baseline():
+    """Verify overview cards display 'No Comparable Baseline' and '—' without misleading percentages."""
+    current = StorageSnapshot(
+        snapshot_id="snap-curr",
+        scan_id="scan-curr",
+        timestamp=1700086400.0,
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=1.0,
+        files_count=100,
+        directories_count=10,
+        total_bytes=9_290_000_000,
+    )
+    previous = StorageSnapshot(
+        snapshot_id="snap-prev",
+        scan_id="scan-prev",
+        timestamp=1700000000.0,
+        scope_id=ScopeIdentifier.CUSTOM,
+        root_path="/",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=5.0,
+        files_count=10000,
+        directories_count=1000,
+        total_bytes=474_000_000_000,
+    )
+
+    engine = StorageTrendsEngine()
+    report = engine.compare_snapshots(current=current, previous=previous)
+
+    assert report.is_comparable is False
+
+    with patch("streamlit.metric") as mock_metric:
+        render_overview_cards(current, report, previous, comparison_label="Change Since Baseline")
+
+        calls = mock_metric.call_args_list
+        metrics_by_label = {call.kwargs.get("label"): call.kwargs for call in calls if "label" in call.kwargs}
+
+        # Change metric value should be "—" and have no delta
+        assert metrics_by_label["Change Since Baseline"]["value"] == "—"
+        assert "delta" not in metrics_by_label["Change Since Baseline"]
+        assert "different scope" in metrics_by_label["Change Since Baseline"]["help"]
+
+        # Trend Classification should be "No Comparable Baseline"
+        assert metrics_by_label["Trend Classification"]["value"] == "No Comparable Baseline"
+        assert "different scope" in metrics_by_label["Trend Classification"]["help"]
+
+
+def test_chart_does_not_connect_incompatible_scope_measurements():
+    """Verify chart only plots snapshots sharing the same scope and root as the latest snapshot."""
+    snap1 = StorageSnapshot(
+        snapshot_id="snap-root",
+        scan_id="scan-root",
+        timestamp=1700000000.0,
+        scope_id=ScopeIdentifier.CUSTOM,
+        root_path="/",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=5.0,
+        files_count=10000,
+        directories_count=1000,
+        total_bytes=474_000_000_000,
+    )
+    snap2 = StorageSnapshot(
+        snapshot_id="snap-home",
+        scan_id="scan-home",
+        timestamp=1700086400.0,
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=1.0,
+        files_count=100,
+        directories_count=10,
+        total_bytes=9_290_000_000,
+    )
+
+    # When given list [snap2, snap1], chart filters to snap2 only, which is < 2 matching snapshots
+    with patch("streamlit.info") as mock_info, patch("streamlit.altair_chart") as mock_chart:
+        render_storage_history_chart([snap2, snap1])
+
+        # Should show info message because only 1 snapshot matches scope/root
+        mock_info.assert_called_once()
+        assert "Run another scan later with the same scope" in mock_info.call_args[0][0]
+        mock_chart.assert_not_called()
+

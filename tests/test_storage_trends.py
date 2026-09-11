@@ -80,9 +80,54 @@ def test_scope_incompatibility_enforcement():
 
     assert report.is_comparable is False
     assert report.overall_trend.direction == TrendDirection.UNKNOWN
-    assert "not comparable" in report.overall_trend.explanation
+    assert report.overall_trend.percentage_change is None
+    assert report.overall_trend.absolute_change == 0
+    assert "The previous scan used a different scope" in report.overall_trend.explanation
     assert len(report.notes) == 1
     assert "Incompatible scan comparison" in report.notes[0]
+
+
+def test_system_root_vs_user_home_incompatibility():
+    """Verify system root scan (CUSTOM /) vs user home (HOME /Users/test) is non-comparable."""
+    snap_system = make_snapshot("snap_root", 100.0, 474 * 1024 * 1024 * 1024, scope_id=ScopeIdentifier.CUSTOM, root_path="/")
+    snap_home = make_snapshot("snap_home", 200.0, 9 * 1024 * 1024 * 1024, scope_id=ScopeIdentifier.HOME, root_path="/Users/test")
+
+    engine = StorageTrendsEngine()
+    report = engine.compare_snapshots(current=snap_home, previous=snap_system)
+
+    assert report.is_comparable is False
+    assert report.overall_trend.direction == TrendDirection.UNKNOWN
+    assert report.overall_trend.percentage_change is None
+    assert report.overall_trend.absolute_change == 0
+    assert "The previous scan used a different scope, so MacGuard will not interpret the difference as storage growth or shrinkage." == report.overall_trend.explanation
+
+
+def test_different_custom_directories_incompatibility():
+    """Verify custom scans of different directory roots are non-comparable."""
+    snap_dir1 = make_snapshot("snap_d1", 100.0, 1000000, scope_id=ScopeIdentifier.CUSTOM, root_path="/Users/test/FolderA")
+    snap_dir2 = make_snapshot("snap_d2", 200.0, 2000000, scope_id=ScopeIdentifier.CUSTOM, root_path="/Users/test/FolderB")
+
+    engine = StorageTrendsEngine()
+    report = engine.compare_snapshots(current=snap_dir2, previous=snap_dir1)
+
+    assert report.is_comparable is False
+    assert report.overall_trend.direction == TrendDirection.UNKNOWN
+    assert report.overall_trend.percentage_change is None
+    assert report.overall_trend.absolute_change == 0
+
+
+def test_repeated_scans_same_scope_shows_valid_trends():
+    """Verify repeated scans of the exact same scope compute valid growth and shrinkage."""
+    snap1 = make_snapshot("snap1", 100.0, 10 * 1024 * 1024 * 1024, scope_id=ScopeIdentifier.HOME, root_path="/Users/test")
+    snap2 = make_snapshot("snap2", 200.0, 12 * 1024 * 1024 * 1024, scope_id=ScopeIdentifier.HOME, root_path="/Users/test")
+
+    engine = StorageTrendsEngine()
+    report = engine.compare_snapshots(current=snap2, previous=snap1)
+
+    assert report.is_comparable is True
+    assert report.overall_trend.direction == TrendDirection.GROWING
+    assert report.overall_trend.percentage_change == 20.0
+    assert report.overall_trend.absolute_change == 2 * 1024 * 1024 * 1024
 
 
 def test_overall_volume_growth_trend():

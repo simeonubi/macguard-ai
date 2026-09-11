@@ -1,3 +1,5 @@
+import os
+
 from app.tools.storage_scanner import (
     StorageScanner,
     format_bytes,
@@ -144,5 +146,110 @@ def test_distinction_between_system_disk_and_candidate_metrics():
     # System used space is NOT candidate size:
     assert system_usage.used_bytes != candidate_physical_bytes
     assert system_usage.used_bytes > candidate_physical_bytes
+
+
+def test_apfs_root_scan_prunes_system_volumes_and_volumes(tmp_path):
+    """
+    Test that scanner traversal prunes /System/Volumes and /Volumes hierarchy.
+    """
+    from app.tools.storage_scanner import StorageScanner
+
+    # Create synthetic directory structure mimicking APFS root
+    root_mock = tmp_path / "mock_root"
+    root_mock.mkdir()
+    (root_mock / "Users").mkdir()
+    (root_mock / "Users" / "userfile.txt").write_text("hello user")
+
+    (root_mock / "Applications").mkdir()
+    (root_mock / "Applications" / "app.txt").write_text("app data")
+
+    # Legitimate /System content
+    (root_mock / "System").mkdir()
+    (root_mock / "System" / "Library").mkdir()
+    (root_mock / "System" / "Library" / "sysfile.txt").write_text("system library data")
+
+    # Duplicate firmlink & volume mounts inside /System/Volumes
+    (root_mock / "System" / "Volumes").mkdir()
+    (root_mock / "System" / "Volumes" / "Data").mkdir()
+    (root_mock / "System" / "Volumes" / "Data" / "Users").mkdir()
+    (root_mock / "System" / "Volumes" / "Data" / "Users" / "duplicate.txt").write_text("duplicate data 123456789")
+
+    (root_mock / "System" / "Volumes" / "Preboot").mkdir()
+    (root_mock / "System" / "Volumes" / "Preboot" / "preboot.bin").write_text("preboot data")
+
+    (root_mock / "System" / "Volumes" / "VM").mkdir()
+    (root_mock / "System" / "Volumes" / "VM" / "swapfile").write_text("swap data")
+
+    (root_mock / "System" / "Volumes" / "Update").mkdir()
+    (root_mock / "System" / "Volumes" / "Update" / "update.bin").write_text("update data")
+
+    # /Volumes mounted disk
+    (root_mock / "Volumes").mkdir()
+    (root_mock / "Volumes" / "ExternalDrive").mkdir()
+    (root_mock / "Volumes" / "ExternalDrive" / "external.dat").write_text("external disk content")
+
+    scanner = StorageScanner()
+
+    # Sizing of /System should include /System/Library but PRUNE /System/Volumes
+    system_size = scanner.get_directory_size(str(root_mock / "System"))
+    expected_sysfile_size = (root_mock / "System" / "Library" / "sysfile.txt").stat().st_size
+    assert system_size == expected_sysfile_size
+
+    # Sizing of /Users should discover user content
+    users_size = scanner.get_directory_size(str(root_mock / "Users"))
+    assert users_size == (root_mock / "Users" / "userfile.txt").stat().st_size
+
+
+def test_apfs_synthetic_firmlink_inode_deduplication(tmp_path, monkeypatch):
+    """
+    Synthetic regression test representing /System/Volumes/Data/Users and /Users
+    sharing the same synthetic (st_dev, st_ino) filesystem identity.
+    Verifies that the accounting model does not count the same physical object twice.
+    """
+    from app.tools.storage_scanner import StorageScanner
+    import os
+
+    # Create mock layout
+    root_mock = tmp_path / "root"
+    root_mock.mkdir()
+    user_file = root_mock / "Users" / "file.dat"
+    user_file.parent.mkdir()
+    user_file.write_bytes(b"A" * 1024)
+
+    scanner = StorageScanner()
+    visited_inodes = set()
+
+    # Pass 1: compute size of /Users
+    size1 = scanner.get_directory_size(str(root_mock / "Users"), visited_inodes=visited_inodes)
+    assert size1 == 1024
+    assert len(visited_inodes) == 1
+
+    # Pass 2: compute size of an identical inode simulated path
+    size2 = scanner.get_directory_size(str(root_mock / "Users"), visited_inodes=visited_inodes)
+    assert size2 == 0  # Deduplicated by (st_dev, st_ino) tracking!
+
+
+def test_get_top_directories_prunes_root_virtual_mounts(monkeypatch):
+    """
+    Test that get_top_directories ignores virtual mount directories when path is root.
+    """
+    from app.tools.storage_scanner import StorageScanner
+
+    scanner = StorageScanner()
+    monkeypatch.setattr(scanner, "get_directory_size", lambda p: 1024)
+
+    top_dirs = scanner.get_top_directories(path="/", limit=20)
+    top_paths = [item.path for item in top_dirs]
+
+    # Must NOT contain virtual/mount root endpoints
+    assert "/Volumes" not in top_paths
+    assert "/dev" not in top_paths
+    assert "/cores" not in top_paths
+
+    # Should contain legitimate directories if they exist on the Mac
+    for item in top_dirs:
+        assert item.item_type == "directory"
+        assert item.size_bytes >= 0
+        assert not os.path.basename(item.path).startswith(".")
 
         

@@ -38,6 +38,80 @@ from app.models.storage_history import (
 DEFAULT_SNAPSHOT_RETENTION_COUNT: int = 365
 
 
+def normalize_canonical_root(root_path: Union[str, Path]) -> str:
+    """Normalize a path to a consistent canonical string representation."""
+    if not root_path:
+        return "/"
+    return os.path.normpath(str(root_path))
+
+
+def is_path_contained_in_root(item_path: Union[str, Path], root_path: Union[str, Path]) -> bool:
+    """
+    Determine if item_path is within or equal to root_path using
+    proper filesystem path boundary semantics (avoiding naive string prefix matching).
+    """
+    try:
+        norm_item = normalize_canonical_root(item_path)
+        norm_root = normalize_canonical_root(root_path)
+
+        if norm_root == "/":
+            return norm_item.startswith("/")
+
+        item_p = Path(norm_item)
+        root_p = Path(norm_root)
+
+        try:
+            item_p.relative_to(root_p)
+            return True
+        except ValueError:
+            return False
+    except Exception:
+        return False
+
+
+def is_snapshot_scope_compatible(
+    snapshot: StorageSnapshot,
+    target_scope: ScopeIdentifier,
+    target_root: Union[str, Path],
+) -> bool:
+    """
+    Centralized compatibility and containment validator for historical snapshots.
+
+    A snapshot is compatible with a target scope and target root path if:
+    1. The snapshot's scope_id exactly matches target_scope.
+    2. The snapshot's normalized root_path matches target_root's normalized path.
+    3. If target_root is root ('/'):
+       Normal absolute paths are considered within the root.
+    4. If target_root is non-root (e.g. /Users/mac):
+       snapshot.top_consumers must be present and non-empty.
+       Every recorded consumer path must be contained within target_root.
+       If top_consumers is missing or empty, returns False because there is
+       insufficient historical metadata to establish containment.
+    """
+    if snapshot.scope_id != target_scope:
+        return False
+
+    norm_target_root = normalize_canonical_root(target_root)
+    norm_snap_root = normalize_canonical_root(snapshot.root_path)
+
+    if norm_snap_root != norm_target_root:
+        return False
+
+    # Root scope accepts all root-contained snapshots
+    if norm_target_root == "/":
+        return True
+
+    # For non-root scopes, top_consumers must be present and non-empty
+    if not snapshot.top_consumers:
+        return False
+
+    for consumer in snapshot.top_consumers:
+        if not is_path_contained_in_root(consumer.path, norm_target_root):
+            return False
+
+    return True
+
+
 class StorageHistoryRepository:
     """
     Thread-safe, atomic SQLite repository for recording and querying storage scan history.
@@ -240,6 +314,18 @@ class StorageHistoryRepository:
                             confidence=f.confidence,
                         )
                     )
+            elif scan_result.items:
+                sorted_items = sorted(scan_result.items, key=lambda it: -it.size_bytes)
+                for rank_idx, item in enumerate(sorted_items[:20], start=1):
+                    top_consumers.append(
+                        LargeConsumerSnapshotItem(
+                            rank=rank_idx,
+                            path=item.path,
+                            size_bytes=item.size_bytes,
+                            category=item.category or SmartCategory.UNKNOWN,
+                            confidence=ConfidenceLevel.HIGH,
+                        )
+                    )
 
             # 4. Unique bytes derivation
             unique_bytes = None
@@ -377,20 +463,22 @@ class StorageHistoryRepository:
         scope_id: ScopeIdentifier,
         root_path: Optional[str] = None,
     ) -> Optional[StorageSnapshot]:
-        """Retrieve the most recent snapshot for a given scope and optional normalized root path."""
-        norm_root = os.path.normpath(str(root_path)) if root_path is not None else None
+        """Retrieve the most recent compatible snapshot for a given scope and optional normalized root path."""
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT snapshot_id, root_path FROM storage_snapshots WHERE scope_id = ? ORDER BY timestamp DESC",
+                    "SELECT snapshot_id FROM storage_snapshots WHERE scope_id = ? ORDER BY timestamp DESC",
                     (scope_id.value,),
                 )
                 rows = cursor.fetchall()
                 for row in rows:
-                    if norm_root is None or os.path.normpath(row["root_path"]) == norm_root:
-                        return self._fetch_full_snapshot(conn, "snapshot_id = ?", (row["snapshot_id"],))
+                    snap = self._fetch_full_snapshot(conn, "snapshot_id = ?", (row["snapshot_id"],))
+                    if snap is not None:
+                        target_root = root_path if root_path is not None else snap.root_path
+                        if is_snapshot_scope_compatible(snap, scope_id, target_root):
+                            return snap
                 return None
             finally:
                 self._close_connection(conn)
@@ -401,28 +489,30 @@ class StorageHistoryRepository:
     ) -> Optional[StorageSnapshot]:
         """
         Retrieve the latest comparable snapshot recorded prior to the given snapshot.
-        Matches exact scope_id and normalized root_path.
+        Matches exact scope_id and canonical root_path with verified scope compatibility.
         """
-        curr_norm_root = os.path.normpath(str(current_snapshot.root_path))
+        target_root = current_snapshot.root_path
+        target_scope = current_snapshot.scope_id
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT snapshot_id, root_path FROM storage_snapshots
+                    SELECT snapshot_id FROM storage_snapshots
                     WHERE scope_id = ? AND timestamp < ?
                     ORDER BY timestamp DESC
                     """,
                     (
-                        current_snapshot.scope_id.value,
+                        target_scope.value,
                         current_snapshot.timestamp,
                     ),
                 )
                 rows = cursor.fetchall()
                 for row in rows:
-                    if os.path.normpath(row["root_path"]) == curr_norm_root:
-                        return self._fetch_full_snapshot(conn, "snapshot_id = ?", (row["snapshot_id"],))
+                    snap = self._fetch_full_snapshot(conn, "snapshot_id = ?", (row["snapshot_id"],))
+                    if snap is not None and is_snapshot_scope_compatible(snap, target_scope, target_root):
+                        return snap
                 return None
             finally:
                 self._close_connection(conn)
@@ -433,22 +523,22 @@ class StorageHistoryRepository:
         limit: int = 50,
         root_path: Optional[str] = None,
     ) -> List[StorageSnapshot]:
-        """Retrieve historical snapshots in descending chronological order matching exact scope and root_path."""
-        norm_root = os.path.normpath(str(root_path)) if root_path is not None else None
+        """Retrieve historical snapshots in descending chronological order matching exact scope and root_path with verified scope compatibility."""
         with self._lock:
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT snapshot_id, root_path FROM storage_snapshots WHERE scope_id = ? ORDER BY timestamp DESC",
+                    "SELECT snapshot_id FROM storage_snapshots WHERE scope_id = ? ORDER BY timestamp DESC",
                     (scope_id.value,),
                 )
                 rows = cursor.fetchall()
                 snapshots: List[StorageSnapshot] = []
                 for row in rows:
-                    if norm_root is None or os.path.normpath(row["root_path"]) == norm_root:
-                        snap = self._fetch_full_snapshot(conn, "snapshot_id = ?", (row["snapshot_id"],))
-                        if snap is not None:
+                    snap = self._fetch_full_snapshot(conn, "snapshot_id = ?", (row["snapshot_id"],))
+                    if snap is not None:
+                        target_root = root_path if root_path is not None else snap.root_path
+                        if is_snapshot_scope_compatible(snap, scope_id, target_root):
                             snapshots.append(snap)
                             if len(snapshots) >= limit:
                                 break

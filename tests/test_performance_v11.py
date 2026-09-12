@@ -569,7 +569,18 @@ def test_database_repeated_snapshots_and_retention() -> None:
                 files_count=1000 + i,
                 directories_count=100,
                 total_bytes=10_000_000_000 + (i * 100_000_000),
-                items=[],
+                items=[
+                    DiscoveredItem(
+                        path="/Users/test/file.dat",
+                        size_bytes=1000,
+                        item_type="file",
+                        depth=1,
+                        mtime=1725000000.0,
+                        st_ino=1,
+                        st_dev=1,
+                        category=SmartCategory.DOCUMENTS,
+                    )
+                ],
             )
             cat_summaries = [
                 LargeFileCategorySummary(
@@ -608,7 +619,18 @@ def test_database_idempotency_and_foreign_key_safety() -> None:
             files_count=100,
             directories_count=10,
             total_bytes=1_000_000,
-            items=[],
+            items=[
+                DiscoveredItem(
+                    path="/Users/test/file.dat",
+                    size_bytes=1000,
+                    item_type="file",
+                    depth=1,
+                    mtime=1725000000.0,
+                    st_ino=1,
+                    st_dev=1,
+                    category=SmartCategory.DOCUMENTS,
+                )
+            ],
         )
 
         s1 = repo.record_snapshot(scan, scan_id="scan-dup-01")
@@ -804,7 +826,18 @@ def test_database_concurrent_read_write_wal_safety() -> None:
                 files_count=100 + i,
                 directories_count=10,
                 total_bytes=100_000 * (i + 1),
-                items=[],
+                items=[
+                    DiscoveredItem(
+                        path="/Users/test/file.dat",
+                        size_bytes=1000,
+                        item_type="file",
+                        depth=1,
+                        mtime=1725000000.0,
+                        st_ino=1,
+                        st_dev=1,
+                        category=SmartCategory.DOCUMENTS,
+                    )
+                ],
             )
             repo.record_snapshot(scan)
 
@@ -835,7 +868,18 @@ def test_database_concurrent_read_write_wal_safety() -> None:
                 files_count=100 + i,
                 directories_count=10,
                 total_bytes=100_000 * (i + 1),
-                items=[],
+                items=[
+                    DiscoveredItem(
+                        path="/Users/test/file.dat",
+                        size_bytes=1000,
+                        item_type="file",
+                        depth=1,
+                        mtime=1725000000.0,
+                        st_ino=1,
+                        st_dev=1,
+                        category=SmartCategory.DOCUMENTS,
+                    )
+                ],
             )
             repo.record_snapshot(scan)
             time.sleep(0.005)

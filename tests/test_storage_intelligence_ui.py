@@ -18,7 +18,7 @@ from app.analysis.storage_history import StorageHistoryRepository
 from app.analysis.storage_trends import StorageTrendsEngine
 from app.models.category import ConfidenceLevel, SmartCategory
 from app.models.developer import DeveloperStorageSubtype
-from app.models.scan_result import ScanResult, ScanStatus
+from app.models.scan_result import DiscoveredItem, ScanResult, ScanStatus
 from app.models.scan_scope import ScanScope, ScopeIdentifier, TraversalLimits
 from app.models.storage_history import (
     CategorySnapshotItem,
@@ -165,6 +165,18 @@ def test_storage_intelligence_renders_with_one_snapshot(sample_snapshots):
         files_count=1000,
         directories_count=200,
         total_bytes=100_000_000_000,
+        items=[
+            DiscoveredItem(
+                path="/Users/mac/Projects/data.bin",
+                size_bytes=1000,
+                item_type="file",
+                depth=1,
+                mtime=1700000000.0,
+                st_ino=1,
+                st_dev=1,
+                category=SmartCategory.DEVELOPER_DATA,
+            )
+        ],
     )
     repo.record_snapshot(scan_res, scan_id="scan-001")
     st.session_state.storage_history = repo
@@ -190,6 +202,18 @@ def test_storage_intelligence_renders_with_multiple_snapshots(sample_snapshots):
         files_count=1000,
         directories_count=200,
         total_bytes=100_000_000_000,
+        items=[
+            DiscoveredItem(
+                path="/Users/mac/Projects/app.py",
+                size_bytes=1000,
+                item_type="file",
+                depth=1,
+                mtime=1700000000.0,
+                st_ino=1,
+                st_dev=1,
+                category=SmartCategory.DEVELOPER_DATA,
+            )
+        ],
     )
     res2 = ScanResult(
         scope_id=ScopeIdentifier.HOME,
@@ -201,6 +225,18 @@ def test_storage_intelligence_renders_with_multiple_snapshots(sample_snapshots):
         files_count=1100,
         directories_count=220,
         total_bytes=120_000_000_000,
+        items=[
+            DiscoveredItem(
+                path="/Users/mac/Projects/app.py",
+                size_bytes=1200,
+                item_type="file",
+                depth=1,
+                mtime=1700086400.0,
+                st_ino=1,
+                st_dev=1,
+                category=SmartCategory.DEVELOPER_DATA,
+            )
+        ],
     )
     repo.record_snapshot(res1, scan_id="scan-001")
     repo.record_snapshot(res2, scan_id="scan-002")
@@ -585,6 +621,18 @@ def test_dynamic_comparison_label_wording(sample_snapshots):
         files_count=1000,
         directories_count=200,
         total_bytes=100_000_000_000,
+        items=[
+            DiscoveredItem(
+                path="/Users/mac/Projects/file1.py",
+                size_bytes=1000,
+                item_type="file",
+                depth=1,
+                mtime=1700000000.0,
+                st_ino=1,
+                st_dev=1,
+                category=SmartCategory.DEVELOPER_DATA,
+            )
+        ],
     )
     res2 = ScanResult(
         scope_id=ScopeIdentifier.HOME,
@@ -596,6 +644,18 @@ def test_dynamic_comparison_label_wording(sample_snapshots):
         files_count=1100,
         directories_count=220,
         total_bytes=120_000_000_000,
+        items=[
+            DiscoveredItem(
+                path="/Users/mac/Projects/file2.py",
+                size_bytes=1200,
+                item_type="file",
+                depth=1,
+                mtime=1700086400.0,
+                st_ino=1,
+                st_dev=1,
+                category=SmartCategory.DEVELOPER_DATA,
+            )
+        ],
     )
     repo.record_snapshot(res1, scan_id="scan-001")
     repo.record_snapshot(res2, scan_id="scan-002")
@@ -734,6 +794,15 @@ def test_user_home_chart_strictly_excludes_root_scans_when_multiple_home_scans_e
         files_count=100,
         directories_count=10,
         total_bytes=9_290_000_000,
+        top_consumers=[
+            LargeConsumerSnapshotItem(
+                rank=1,
+                path="/Users/mac/Downloads/archive1.zip",
+                size_bytes=5_000_000_000,
+                category=SmartCategory.ARCHIVES,
+                confidence=ConfidenceLevel.HIGH,
+            )
+        ],
     )
     snap_home2 = StorageSnapshot(
         snapshot_id="snap-home-2",
@@ -746,6 +815,15 @@ def test_user_home_chart_strictly_excludes_root_scans_when_multiple_home_scans_e
         files_count=105,
         directories_count=10,
         total_bytes=9_300_000_000,
+        top_consumers=[
+            LargeConsumerSnapshotItem(
+                rank=1,
+                path="/Users/mac/Downloads/archive2.zip",
+                size_bytes=5_000_000_000,
+                category=SmartCategory.ARCHIVES,
+                confidence=ConfidenceLevel.HIGH,
+            )
+        ],
     )
 
     with patch("streamlit.altair_chart") as mock_chart, patch("streamlit.info") as mock_info:
@@ -801,3 +879,98 @@ def test_custom_scans_of_different_roots_remain_strictly_isolated():
         assert mock_info.called
         assert "Run another scan later with the same scope" in mock_info.call_args[0][0]
         assert not mock_chart.called
+
+
+def test_chart_excludes_legacy_out_of_boundary_snapshot():
+    """
+    Verify render_storage_history_chart excludes a legacy ~474 GB snapshot
+    stored under HOME whose top consumers are outside /Users/mac.
+    """
+    from app.models.category import ConfidenceLevel, SmartCategory
+    from app.models.storage_history import LargeConsumerSnapshotItem
+
+    snap_home1 = StorageSnapshot(
+        snapshot_id="snap-home-1",
+        scan_id="scan-home-1",
+        timestamp=1700000000.0,
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=1.0,
+        files_count=1000,
+        directories_count=100,
+        total_bytes=10_000_000_000,
+        top_consumers=[
+            LargeConsumerSnapshotItem(
+                rank=1,
+                path="/Users/mac/Downloads/app.dmg",
+                size_bytes=5_000_000_000,
+                category=SmartCategory.ARCHIVES,
+                confidence=ConfidenceLevel.HIGH,
+            )
+        ],
+    )
+    snap_legacy_474gb = StorageSnapshot(
+        snapshot_id="snap-legacy-474gb",
+        scan_id="scan-legacy-474gb",
+        timestamp=1700050000.0,
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=10.0,
+        files_count=500000,
+        directories_count=50000,
+        total_bytes=474_000_000_000,
+        top_consumers=[
+            LargeConsumerSnapshotItem(
+                rank=1,
+                path="/System/Library/Kernels",
+                size_bytes=200_000_000_000,
+                category=SmartCategory.SYSTEM_DATA,
+                confidence=ConfidenceLevel.HIGH,
+            ),
+            LargeConsumerSnapshotItem(
+                rank=2,
+                path="/Applications/Xcode.app",
+                size_bytes=30_000_000_000,
+                category=SmartCategory.APPLICATIONS,
+                confidence=ConfidenceLevel.HIGH,
+            ),
+        ],
+    )
+    snap_home2 = StorageSnapshot(
+        snapshot_id="snap-home-2",
+        scan_id="scan-home-2",
+        timestamp=1700100000.0,
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=1.1,
+        files_count=1050,
+        directories_count=102,
+        total_bytes=11_000_000_000,
+        top_consumers=[
+            LargeConsumerSnapshotItem(
+                rank=1,
+                path="/Users/mac/.cache/models.bin",
+                size_bytes=6_000_000_000,
+                category=SmartCategory.CACHES,
+                confidence=ConfidenceLevel.HIGH,
+            )
+        ],
+    )
+
+    with patch("streamlit.altair_chart") as mock_chart:
+        render_storage_history_chart(
+            [snap_home2, snap_legacy_474gb, snap_home1],
+            target_scope=ScopeIdentifier.HOME,
+            target_root="/Users/mac",
+        )
+        assert mock_chart.called
+        chart_obj = mock_chart.call_args[0][0]
+        # Inspect chart dataset to ensure 474 GB is absent
+        chart_df = chart_obj.data
+        assert len(chart_df) == 2
+        # Max storage in chart must be ~11 GB, not 474 GB
+        assert chart_df["Storage_GB"].max() < 20.0
+        assert 474.0 not in chart_df["Storage_GB"].values

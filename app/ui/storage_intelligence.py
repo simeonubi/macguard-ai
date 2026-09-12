@@ -17,7 +17,10 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from app.analysis.storage_history import StorageHistoryRepository
+from app.analysis.storage_history import (
+    StorageHistoryRepository,
+    is_snapshot_scope_compatible,
+)
 from app.analysis.storage_trends import StorageTrendsEngine
 from app.models.category import SmartCategory
 from app.models.developer import DeveloperStorageSubtype
@@ -362,16 +365,12 @@ def render_storage_history_chart(
     if not snapshots:
         return
 
-    # Filter snapshots to only those sharing the exact scope_id and canonical root_path,
-    # strictly preventing visual connection of incompatible scope/root measurements.
-    import os
-
     effective_scope = target_scope if target_scope is not None else snapshots[0].scope_id
-    effective_root = os.path.normpath(str(target_root)) if target_root is not None else os.path.normpath(str(snapshots[0].root_path))
+    effective_root = target_root if target_root is not None else snapshots[0].root_path
 
     compatible_snapshots = [
         s for s in snapshots
-        if s.scope_id == effective_scope and os.path.normpath(str(s.root_path)) == effective_root
+        if is_snapshot_scope_compatible(s, effective_scope, effective_root)
     ]
 
     if len(compatible_snapshots) < 2:

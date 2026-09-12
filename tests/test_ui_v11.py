@@ -472,6 +472,15 @@ def test_storage_intelligence_trend_chart_zero_bound_scale() -> None:
             files_count=100,
             directories_count=20,
             total_bytes=10_000_000,
+            top_consumers=[
+                LargeConsumerSnapshotItem(
+                    rank=1,
+                    path="/Users/test/file1.dat",
+                    size_bytes=5_000_000,
+                    category=SmartCategory.DOCUMENTS,
+                    confidence=ConfidenceLevel.HIGH,
+                )
+            ],
         ),
         StorageSnapshot(
             snapshot_id="snap-2",
@@ -484,6 +493,15 @@ def test_storage_intelligence_trend_chart_zero_bound_scale() -> None:
             files_count=110,
             directories_count=22,
             total_bytes=12_000_000,
+            top_consumers=[
+                LargeConsumerSnapshotItem(
+                    rank=1,
+                    path="/Users/test/file2.dat",
+                    size_bytes=6_000_000,
+                    category=SmartCategory.DOCUMENTS,
+                    confidence=ConfidenceLevel.HIGH,
+                )
+            ],
         ),
     ]
     with patch("streamlit.altair_chart") as mock_chart:

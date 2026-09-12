@@ -64,8 +64,25 @@ def make_scan_result(
     start_time: float = 1710000000.0,
     end_time: float = 1710000010.0,
     status: ScanStatus = ScanStatus.COMPLETED,
+    items: Optional[List[DiscoveredItem]] = None,
 ) -> ScanResult:
     """Helper to produce synthetic ScanResult objects."""
+    effective_items = (
+        items
+        if items is not None
+        else [
+            DiscoveredItem(
+                path=f"{root_path}/Documents/file_1.dat",
+                size_bytes=min(total_bytes, 1024 * 1024),
+                item_type="file",
+                depth=1,
+                mtime=start_time,
+                st_ino=1001,
+                st_dev=1,
+                category=SmartCategory.DOCUMENTS,
+            )
+        ]
+    )
     return ScanResult(
         scope_id=scope_id,
         root_path=root_path,
@@ -76,7 +93,7 @@ def make_scan_result(
         files_count=files_count,
         directories_count=directories_count,
         total_bytes=total_bytes,
-        items=[],
+        items=effective_items,
     )
 
 
@@ -521,3 +538,277 @@ def test_foreign_key_cascade_on_raw_sql_delete(repo: StorageHistoryRepository, t
     conn.close()
 
 
+def test_path_boundary_containment_semantics():
+    """Verify path boundary containment avoids naive string prefix matching."""
+    from app.analysis.storage_history import is_path_contained_in_root
+
+    # Standard positive matches
+    assert is_path_contained_in_root("/Users/mac/Library/Caches", "/Users/mac") is True
+    assert is_path_contained_in_root("/Users/mac/Downloads/file.iso", "/Users/mac") is True
+    assert is_path_contained_in_root("/Users/mac", "/Users/mac") is True
+
+    # Path boundary false positives that naive str.startswith would wrongly allow
+    assert is_path_contained_in_root("/Users/machine", "/Users/mac") is False
+    assert is_path_contained_in_root("/Users/mac_backup", "/Users/mac") is False
+    assert is_path_contained_in_root("/Users/macaroni/file.txt", "/Users/mac") is False
+
+    # Out of boundary system paths
+    assert is_path_contained_in_root("/System", "/Users/mac") is False
+    assert is_path_contained_in_root("/Applications", "/Users/mac") is False
+    assert is_path_contained_in_root("/Library", "/Users/mac") is False
+    assert is_path_contained_in_root("/private/var", "/Users/mac") is False
+
+    # Root scope target accepts all absolute paths
+    assert is_path_contained_in_root("/System", "/") is True
+    assert is_path_contained_in_root("/Applications", "/") is True
+    assert is_path_contained_in_root("/Users/mac", "/") is True
+    assert is_path_contained_in_root("/Library", "/") is True
+
+
+def test_legacy_474gb_snapshot_excluded_from_home_scope(repo: StorageHistoryRepository):
+    """
+    Regression test reproducing the legacy Comprehensive scan stored under HOME with out-of-boundary consumers.
+    Must be excluded from HOME history, latest baseline, and previous baseline.
+    """
+    # 1. Genuine HOME snapshot 1 (older)
+    scan_home1 = make_scan_result(
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        total_bytes=9 * 1024 * 1024 * 1024,
+        start_time=1710000000.0,
+        end_time=1710000010.0,
+    )
+    lf_home1 = LargeFileSummary(
+        total_logical_bytes=9 * 1024 * 1024 * 1024,
+        total_unique_bytes=9 * 1024 * 1024 * 1024,
+        total_findings_count=1,
+        size_threshold_bytes=50 * 1024 * 1024,
+        findings=[],
+        top_findings=[
+            LargeFileFinding(
+                path="/Users/mac/Downloads/huge.dmg",
+                size_bytes=9 * 1024 * 1024 * 1024,
+                category=SmartCategory.ARCHIVES,
+                confidence=ConfidenceLevel.HIGH,
+                rank=1,
+                size_threshold_bytes=50 * 1024 * 1024,
+                attention_score=90.0,
+                rationale="User file",
+            )
+        ],
+        category_summaries=[],
+        developer_summaries=[],
+    )
+    snap_home1 = repo.record_snapshot(scan_home1, large_file_summary=lf_home1)
+
+    # 2. Legacy Comprehensive scan recorded with scope_id=HOME, root_path=/Users/mac, 474 GB
+    scan_legacy_root = make_scan_result(
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        total_bytes=474 * 1024 * 1024 * 1024,
+        start_time=1710000100.0,
+        end_time=1710000150.0,
+    )
+    lf_legacy_root = LargeFileSummary(
+        total_logical_bytes=474 * 1024 * 1024 * 1024,
+        total_unique_bytes=474 * 1024 * 1024 * 1024,
+        total_findings_count=3,
+        size_threshold_bytes=50 * 1024 * 1024,
+        findings=[],
+        top_findings=[
+            LargeFileFinding(
+                path="/System/Library/Assets",
+                size_bytes=200 * 1024 * 1024 * 1024,
+                category=SmartCategory.SYSTEM_DATA,
+                confidence=ConfidenceLevel.HIGH,
+                rank=1,
+                size_threshold_bytes=50 * 1024 * 1024,
+                attention_score=95.0,
+                rationale="System storage",
+            ),
+            LargeFileFinding(
+                path="/Applications/Xcode.app",
+                size_bytes=30 * 1024 * 1024 * 1024,
+                category=SmartCategory.APPLICATIONS,
+                confidence=ConfidenceLevel.HIGH,
+                rank=2,
+                size_threshold_bytes=50 * 1024 * 1024,
+                attention_score=90.0,
+                rationale="Application bundle",
+            ),
+            LargeFileFinding(
+                path="/Library/Developer/CoreSimulator",
+                size_bytes=20 * 1024 * 1024 * 1024,
+                category=SmartCategory.DEVELOPER_DATA,
+                confidence=ConfidenceLevel.HIGH,
+                rank=3,
+                size_threshold_bytes=50 * 1024 * 1024,
+                attention_score=85.0,
+                rationale="System developer cache",
+            ),
+        ],
+        category_summaries=[],
+        developer_summaries=[],
+    )
+    snap_legacy = repo.record_snapshot(scan_legacy_root, large_file_summary=lf_legacy_root)
+
+    # 3. Genuine HOME snapshot 2 (latest)
+    scan_home2 = make_scan_result(
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        total_bytes=10 * 1024 * 1024 * 1024,
+        start_time=1710000200.0,
+        end_time=1710000210.0,
+    )
+    lf_home2 = LargeFileSummary(
+        total_logical_bytes=10 * 1024 * 1024 * 1024,
+        total_unique_bytes=10 * 1024 * 1024 * 1024,
+        total_findings_count=1,
+        size_threshold_bytes=50 * 1024 * 1024,
+        findings=[],
+        top_findings=[
+            LargeFileFinding(
+                path="/Users/mac/.cache/models.bin",
+                size_bytes=5 * 1024 * 1024 * 1024,
+                category=SmartCategory.CACHES,
+                confidence=ConfidenceLevel.HIGH,
+                rank=1,
+                size_threshold_bytes=50 * 1024 * 1024,
+                attention_score=90.0,
+                rationale="User cache",
+            )
+        ],
+        category_summaries=[],
+        developer_summaries=[],
+    )
+    snap_home2 = repo.record_snapshot(scan_home2, large_file_summary=lf_home2)
+
+    # 4. Verify get_snapshot_history excludes legacy 474 GB snapshot
+    history = repo.get_snapshot_history(ScopeIdentifier.HOME, root_path="/Users/mac")
+    assert len(history) == 2
+    assert [s.snapshot_id for s in history] == [snap_home2.snapshot_id, snap_home1.snapshot_id]
+    assert all(s.total_bytes < 20 * 1024 * 1024 * 1024 for s in history)
+    assert snap_legacy.snapshot_id not in [s.snapshot_id for s in history]
+
+    # 5. Verify get_latest_snapshot returns genuine snap_home2
+    latest = repo.get_latest_snapshot(ScopeIdentifier.HOME, root_path="/Users/mac")
+    assert latest is not None
+    assert latest.snapshot_id == snap_home2.snapshot_id
+
+    # 6. Verify get_previous_snapshot returns genuine snap_home1 (skipping legacy snap)
+    prev = repo.get_previous_snapshot(snap_home2)
+    assert prev is not None
+    assert prev.snapshot_id == snap_home1.snapshot_id
+
+
+def test_snapshot_scope_compatibility_triplet_cases():
+    """
+    Verify conservative scope containment validator behavior:
+    1. Matching HOME scope/root + empty top_consumers => incompatible / excluded (False).
+    2. Matching HOME scope/root + valid contained consumers => compatible (True).
+    3. Matching HOME scope/root + one out-of-bound consumer => incompatible / excluded (False).
+    4. Root scope target ("/") => compatible with absolute paths.
+    """
+    from app.analysis.storage_history import is_snapshot_scope_compatible
+
+    # 1. Matching HOME scope/root + empty top_consumers
+    snap_empty_consumers = StorageSnapshot(
+        snapshot_id="snap-empty",
+        scan_id="scan-empty",
+        timestamp=1710000000.0,
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=1.0,
+        files_count=10,
+        directories_count=2,
+        total_bytes=1000000,
+        top_consumers=[],
+    )
+    assert is_snapshot_scope_compatible(snap_empty_consumers, ScopeIdentifier.HOME, "/Users/mac") is False
+
+    # 2. Matching HOME scope/root + valid contained consumers
+    snap_valid_consumers = StorageSnapshot(
+        snapshot_id="snap-valid",
+        scan_id="scan-valid",
+        timestamp=1710000010.0,
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=1.0,
+        files_count=100,
+        directories_count=10,
+        total_bytes=5000000000,
+        top_consumers=[
+            LargeConsumerSnapshotItem(
+                rank=1,
+                path="/Users/mac/Downloads/big_archive.zip",
+                size_bytes=3000000000,
+                category=SmartCategory.ARCHIVES,
+                confidence=ConfidenceLevel.HIGH,
+            ),
+            LargeConsumerSnapshotItem(
+                rank=2,
+                path="/Users/mac/Library/Caches/com.apple.test",
+                size_bytes=2000000000,
+                category=SmartCategory.CACHES,
+                confidence=ConfidenceLevel.HIGH,
+            ),
+        ],
+    )
+    assert is_snapshot_scope_compatible(snap_valid_consumers, ScopeIdentifier.HOME, "/Users/mac") is True
+
+    # 3. Matching HOME scope/root + one out-of-bound consumer
+    snap_out_of_bound_consumer = StorageSnapshot(
+        snapshot_id="snap-oob",
+        scan_id="scan-oob",
+        timestamp=1710000020.0,
+        scope_id=ScopeIdentifier.HOME,
+        root_path="/Users/mac",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=1.0,
+        files_count=100,
+        directories_count=10,
+        total_bytes=5000000000,
+        top_consumers=[
+            LargeConsumerSnapshotItem(
+                rank=1,
+                path="/Users/mac/Downloads/big_archive.zip",
+                size_bytes=3000000000,
+                category=SmartCategory.ARCHIVES,
+                confidence=ConfidenceLevel.HIGH,
+            ),
+            LargeConsumerSnapshotItem(
+                rank=2,
+                path="/System/Library/Assets",
+                size_bytes=2000000000,
+                category=SmartCategory.SYSTEM_DATA,
+                confidence=ConfidenceLevel.HIGH,
+            ),
+        ],
+    )
+    assert is_snapshot_scope_compatible(snap_out_of_bound_consumer, ScopeIdentifier.HOME, "/Users/mac") is False
+
+    # 4. Root scope ("/") allows root-contained system paths
+    snap_root_scope = StorageSnapshot(
+        snapshot_id="snap-root",
+        scan_id="scan-root",
+        timestamp=1710000030.0,
+        scope_id=ScopeIdentifier.CUSTOM,
+        root_path="/",
+        status=ScanStatus.COMPLETED,
+        duration_seconds=5.0,
+        files_count=50000,
+        directories_count=5000,
+        total_bytes=250000000000,
+        top_consumers=[
+            LargeConsumerSnapshotItem(
+                rank=1,
+                path="/System/Library/Assets",
+                size_bytes=100000000000,
+                category=SmartCategory.SYSTEM_DATA,
+                confidence=ConfidenceLevel.HIGH,
+            )
+        ],
+    )
+    assert is_snapshot_scope_compatible(snap_root_scope, ScopeIdentifier.CUSTOM, "/") is True

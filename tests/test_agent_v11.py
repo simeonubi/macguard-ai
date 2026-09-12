@@ -71,7 +71,24 @@ def make_test_scan(
     directories_count: int = 20,
     start_time: float = 1725148800.0,
     end_time: float = 1725148810.0,
+    items: list[DiscoveredItem] | None = None,
 ) -> ScanResult:
+    effective_items = (
+        items
+        if items is not None
+        else [
+            DiscoveredItem(
+                path=f"{root_path}/file_1.dat",
+                size_bytes=min(total_bytes, 1024 * 1024),
+                item_type="file",
+                depth=1,
+                mtime=start_time,
+                st_ino=1001,
+                st_dev=1,
+                category=SmartCategory.DOCUMENTS,
+            )
+        ]
+    )
     return ScanResult(
         scope_id=scope_id,
         root_path=root_path,
@@ -82,7 +99,7 @@ def make_test_scan(
         files_count=files_count,
         directories_count=directories_count,
         total_bytes=total_bytes,
-        items=[],
+        items=effective_items,
     )
 
 

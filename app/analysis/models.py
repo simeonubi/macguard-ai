@@ -17,17 +17,7 @@ class StorageCategory(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
-class RiskLevel(str, Enum):
-    """
-    Risk rating indicating the potential impact if an item were to be modified.
-
-    This rating does NOT imply permission to delete.
-    """
-
-    LOW = "LOW"
-    MEDIUM = "MEDIUM"
-    HIGH = "HIGH"
-    UNKNOWN = "UNKNOWN"
+from app.models.risk import RiskLevel
 
 
 class StorageCandidate(BaseModel):

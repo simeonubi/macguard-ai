@@ -239,6 +239,18 @@ class ScanScope(BaseModel):
 
         return False
 
+    def is_path_allowed(self, path: Union[str, Path]) -> bool:
+        """
+        Check whether a given path is within the scope root and not excluded.
+        """
+        try:
+            resolved_target = Path(path).expanduser().resolve()
+            resolved_root = self.resolved_path()
+            resolved_target.relative_to(resolved_root)
+            return not self.is_path_excluded(path)
+        except (ValueError, RuntimeError, OSError):
+            return False
+
     @classmethod
     def create_default_scopes(cls, home_dir: Optional[Union[str, Path]] = None) -> list[ScanScope]:
         """

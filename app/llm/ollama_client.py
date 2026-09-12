@@ -33,17 +33,17 @@ class OllamaConfig:
 
     base_url: str = "http://localhost:11434"
     model: str = "llama3.2"
-    timeout_seconds: float = 30.0
+    timeout_seconds: float = 60.0
 
     @classmethod
     def from_env(cls) -> OllamaConfig:
         base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
         model = os.environ.get("OLLAMA_MODEL", "llama3.2")
-        timeout_str = os.environ.get("OLLAMA_TIMEOUT", "30.0")
+        timeout_str = os.environ.get("OLLAMA_TIMEOUT", "60.0")
         try:
             timeout_seconds = float(timeout_str)
         except ValueError:
-            timeout_seconds = 30.0
+            timeout_seconds = 60.0
 
         return cls(
             base_url=base_url,

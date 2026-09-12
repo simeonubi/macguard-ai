@@ -21,6 +21,7 @@ from app.ui.review import render_review_page
 from app.ui.scan import render_scan_page
 from app.ui.settings import render_settings_page
 from app.ui.storage_intelligence import render_storage_intelligence_page
+from app.ui.storage_investigation_view import render_storage_investigation_page
 from app.ui.state import (
     init_app_state,
     navigate_to,
@@ -73,6 +74,7 @@ def main() -> None:
         # Navigation Tabs
         nav_options = [
             "Dashboard",
+            "StorageInvestigator",
             "Scan",
             "DeveloperStorage",
             "Duplicates",
@@ -87,6 +89,7 @@ def main() -> None:
 
         nav_icons = {
             "Dashboard": "📊 Dashboard",
+            "StorageInvestigator": "🔬 Storage Investigator",
             "Scan": "🔍 Scan Storage",
             "DeveloperStorage": "🛠️ Developer Storage",
             "Duplicates": "📑 Duplicate Explorer",
@@ -119,6 +122,8 @@ def main() -> None:
 
     if active_tab == "Dashboard":
         render_dashboard()
+    elif active_tab in ("StorageInvestigator", "Storage Investigator"):
+        render_storage_investigation_page()
     elif active_tab in ("DeveloperStorage", "Developer Storage"):
         render_developer_storage_page()
     elif active_tab in ("Duplicates", "Duplicate Explorer", "DuplicateExplorer"):

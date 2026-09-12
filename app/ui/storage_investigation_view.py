@@ -135,6 +135,50 @@ def render_storage_investigation_page() -> None:
     else:
         st.info("No significant storage consumer items found in this scope.")
 
+    # 5B. Focused Docker Storage Section (if Docker items detected)
+    docker_items = [it for it in evidence.items if it.is_docker]
+    if docker_items:
+        st.markdown("---")
+        st.markdown("### 🐳 **Docker Storage Breakdown (Read-Only Inspection)**")
+        st.caption("Inspects Docker virtual disks, containers, images, volumes, and build cache without modifying Docker state.")
+
+        vdisk_items = [it for it in docker_items if it.subcategory == "docker_virtual_disk"]
+        vdisk_size = sum(it.size_bytes for it in vdisk_items)
+        cli_items = [it for it in docker_items if it.subcategory == "docker_cli_config"]
+        cli_size = sum(it.size_bytes for it in cli_items)
+
+        runtime_items = [it for it in docker_items if it.subcategory in ("docker_image", "docker_container", "docker_volume", "docker_build_cache")]
+        img_items = [it for it in runtime_items if it.subcategory == "docker_image"]
+        img_size = sum(it.size_bytes for it in img_items)
+        c_items = [it for it in runtime_items if it.subcategory == "docker_container"]
+        c_size = sum(it.size_bytes for it in c_items)
+
+        d_col1, d_col2, d_col3, d_col4 = st.columns(4)
+        with d_col1:
+            st.metric("Docker Virtual Disk (Host)", format_bytes(vdisk_size) if vdisk_size > 0 else "N/A", help="Physical size of Docker.raw / Docker.qcow2 on macOS")
+        with d_col2:
+            st.metric("Docker CLI Config (~/.docker)", format_bytes(cli_size) if cli_size > 0 else "N/A", help="CLI context & client cache")
+        with d_col3:
+            st.metric("Images Reported", format_bytes(img_size) if runtime_items else "Unavailable", help="Total image storage when daemon is active")
+        with d_col4:
+            st.metric("Containers Reported", format_bytes(c_size) if runtime_items else "Unavailable", help="Total container storage when daemon is active")
+
+        if not runtime_items:
+            st.info("ℹ️ **Docker Desktop daemon is stopped or unreachable.** Docker virtual disk (`Docker.raw`) is detected and protected on macOS, but runtime resource inventory (images, containers, volumes, build cache) cannot be inspected while the daemon is offline.")
+
+        docker_table_data = []
+        for it in docker_items:
+            docker_table_data.append({
+                "Resource / Path": it.path,
+                "Type": it.subcategory,
+                "Size": it.size_human,
+                "Safety": it.reclaim_confidence.value,
+                "Active / In Use": "Yes (Running)" if it.currently_in_use else "No (Idle/Stopped)",
+                "Dependency Evidence": it.dependency_evidence or "N/A",
+                "Cleanup Recommendation": it.cleanup_consequence or "Managed via Docker Desktop",
+            })
+        st.dataframe(pd.DataFrame(docker_table_data), use_container_width=True, hide_index=True)
+
     # 6. Cleanup Plan & Batch Approval Section
     st.markdown("---")
     st.markdown("### 📦 **Practical Cleanup Plan & Batch Approval**")

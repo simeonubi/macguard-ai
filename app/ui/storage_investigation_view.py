@@ -179,14 +179,17 @@ def render_storage_investigation_page() -> None:
             })
         st.dataframe(pd.DataFrame(docker_table_data), use_container_width=True, hide_index=True)
 
-        # 5C. Deterministic Docker Cleanup Planning (Phase 14A - Planning Only)
+        # 5C. Deterministic Docker Cleanup Planning & Controlled Execution (Phase 14B)
         from app.analysis.docker_planner import DockerCleanupPlanner
+        from app.execution.docker_cleanup_executor import DockerCleanupExecutor
+        from app.models.docker_cleanup import DockerResourceType
+
         docker_planner = DockerCleanupPlanner()
         dplan = docker_planner.create_plan(evidence)
 
         if dplan.items:
-            st.markdown("#### 📋 **Proposed Docker Cleanup Review Candidates (Planning Only)**")
-            st.caption("Deterministic review proposals for unused resources. Phase 14A is planning-only; no deletion commands are executed.")
+            st.markdown("#### 📋 **Proposed Docker Cleanup Review Candidates**")
+            st.caption("Deterministic review proposals for unused resources. Requires explicit human approval and pre-execution revalidation.")
 
             for warn in dplan.volume_warnings:
                 st.warning(f"⚠️ {warn}")
@@ -204,11 +207,76 @@ def render_storage_investigation_page() -> None:
                     "High Risk": "⚠️ YES (Persistent Data)" if pit.is_high_risk else "No",
                     "Consequence": pit.consequence,
                 })
+            st.dataframe(pd.DataFrame(plan_table_data), use_container_width=True, hide_index=True)
+
             st.info(
                 f"📊 **Proposed Candidates:** {dplan.review_items_count} review candidates ({dplan.total_proposed_human}). "
                 f"**Protected Exclusions:** {dplan.protected_items_count} items ({dplan.running_containers_count} running containers, "
                 f"{dplan.active_images_count} active images, {dplan.attached_volumes_count} attached volumes, {dplan.protected_host_targets_count} host targets)."
             )
+
+            # Controlled Execution Section
+            with st.expander("🛡️ **Approve & Execute Controlled Docker Cleanup**", expanded=False):
+                st.caption("Each action requires cryptographic HMAC approval and is revalidated against live Docker runtime immediately before execution.")
+
+                selected_ditems = []
+                high_risk_volume_ack = False
+
+                has_volumes = any(it.resource_type == DockerResourceType.VOLUME for it in dplan.items)
+                if has_volumes:
+                    high_risk_volume_ack = st.checkbox(
+                        "⚠️ **I understand that volume cleanup permanently and irreversibly erases database and application data.**",
+                        key="chk_docker_volume_ack",
+                    )
+
+                for it in dplan.items:
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        if it.resource_type == DockerResourceType.BUILD_CACHE:
+                            st.markdown(f"**{it.resource_name}** (`{it.resource_id}`) — `{it.size_human}` 🔍 *(Review Only — not executable)*")
+                            st.caption(f"Action: `{it.requested_action}` | {it.consequence} (Review Only — not executable: manage in Docker Desktop to prevent broad prune)")
+                        else:
+                            st.markdown(f"**{it.resource_name}** (`{it.resource_id[:16]}`) — `{it.size_human}`")
+                            st.caption(f"Action: `{it.requested_action}` | {it.consequence}")
+                    with col2:
+                        if it.resource_type == DockerResourceType.BUILD_CACHE:
+                            st.caption("🔒 Review Only — not executable")
+                        else:
+                            chk = st.checkbox("Approve", key=f"chk_ditem_{it.plan_id}")
+                            if chk:
+                                selected_ditems.append(it)
+
+                if st.button("🚀 **Execute Approved Docker Cleanup**", type="primary", disabled=len(selected_ditems) == 0):
+                    executor = DockerCleanupExecutor()
+                    results = []
+                    for it in selected_ditems:
+                        # High risk confirmation
+                        hr_conf = high_risk_volume_ack if it.resource_type == DockerResourceType.VOLUME else False
+                        approval = executor.create_approval(
+                            item=it,
+                            plan_id=dplan.plan_id,
+                            high_risk_confirmed=hr_conf,
+                        )
+                        res = executor.execute_approved_cleanup(approval)
+                        results.append(res)
+                    st.session_state["docker_execution_results"] = results
+
+            # Execution Results Display
+            d_results = st.session_state.get("docker_execution_results")
+            if d_results:
+                st.markdown("##### 📜 **Docker Cleanup Execution & Verification Results**")
+                res_table = []
+                for r in d_results:
+                    res_table.append({
+                        "Execution ID": r.execution_id,
+                        "Resource Type": r.resource_type.value,
+                        "Resource": r.resource_name or r.resource_id,
+                        "Status": r.status.value,
+                        "Reclaimed": r.reclaimed_human,
+                        "Verified": "✅ Yes" if r.verified else "❌ No",
+                        "Message": r.error_message or "Successfully executed and verified.",
+                    })
+                st.dataframe(pd.DataFrame(res_table), use_container_width=True, hide_index=True)
     st.markdown("---")
     st.markdown("### 📦 **Practical Cleanup Plan & Batch Approval**")
     st.caption("Approve verified cleanup batches. Every action is individually verified, HMAC-signed, and moved to Trash.")

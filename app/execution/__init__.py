@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+from app.execution.docker_cleanup_executor import DockerCleanupExecutor
 from app.execution.executor import DryRunExecutor
 from app.execution.integrity import (
     PathIntegritySnapshot,
@@ -21,6 +20,7 @@ __all__ = [
     "ExecutionPlanner",
     "DryRunExecutor",
     "TrashExecutor",
+    "DockerCleanupExecutor",
     "PathIntegritySnapshot",
     "compute_file_sha256",
     "capture_integrity_snapshot",

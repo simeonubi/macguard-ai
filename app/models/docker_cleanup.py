@@ -102,3 +102,67 @@ class DockerCleanupPlan(BaseModel):
     @property
     def review_items_count(self) -> int:
         return len(self.items)
+
+
+class DockerExecutionStatus(str, Enum):
+    """Execution and safety validation outcome status for Docker cleanup operations."""
+
+    EXECUTED = "EXECUTED"
+    REJECTED_INVALID_APPROVAL = "REJECTED_INVALID_APPROVAL"
+    REJECTED_EXPIRED_APPROVAL = "REJECTED_EXPIRED_APPROVAL"
+    REJECTED_ALREADY_CLAIMED = "REJECTED_ALREADY_CLAIMED"
+    REJECTED_PROTECTED = "REJECTED_PROTECTED"
+    REJECTED_NON_EXECUTABLE = "REJECTED_NON_EXECUTABLE"
+    REJECTED_STATE_CHANGED = "REJECTED_STATE_CHANGED"
+    REJECTED_HIGH_RISK_NOT_CONFIRMED = "REJECTED_HIGH_RISK_NOT_CONFIRMED"
+    DOCKER_UNAVAILABLE = "DOCKER_UNAVAILABLE"
+    EXECUTION_FAILED = "EXECUTION_FAILED"
+    VERIFICATION_FAILED = "VERIFICATION_FAILED"
+
+
+class DockerCleanupApproval(BaseModel):
+    """
+    Cryptographically bound, human approval record for a single Docker cleanup operation.
+    """
+
+    model_config = ConfigDict(frozen=True, validate_assignment=True)
+
+    approval_id: str = Field(..., description="Unique approval identifier")
+    plan_id: str = Field(..., description="Associated Docker cleanup plan ID")
+    resource_type: DockerResourceType = Field(..., description="Target Docker resource type")
+    resource_id: str = Field(..., description="Exact immutable Docker resource ID or volume name")
+    resource_name: str = Field(default="", description="Human-readable resource name or repository:tag")
+    planned_operation: str = Field(..., description="Exact allowlisted operation")
+    planned_bytes: int = Field(default=0, ge=0, description="Planned reclaimable bytes")
+    observed_state: dict[str, Any] = Field(default_factory=dict, description="Observed state snapshot at planning time")
+    created_at: str = Field(..., description="ISO timestamp of approval creation")
+    expires_at: str = Field(..., description="ISO timestamp of approval expiration")
+    hmac_signature: str = Field(..., description="HMAC-SHA256 signature guaranteeing approval integrity")
+    high_risk_confirmed: bool = Field(default=False, description="Mandatory confirmation flag for volume cleanup")
+
+
+class DockerExecutionResult(BaseModel):
+    """
+    Deterministic execution result for a single approved Docker cleanup operation.
+    """
+
+    model_config = ConfigDict(frozen=True, validate_assignment=True)
+
+    execution_id: str = Field(..., description="Unique execution identifier")
+    approval_id: str = Field(..., description="Associated approval ID")
+    resource_type: DockerResourceType = Field(..., description="Target Docker resource type")
+    resource_id: str = Field(..., description="Target Docker resource ID")
+    resource_name: str = Field(default="", description="Human-readable resource name")
+    operation: str = Field(..., description="Executed operation identifier")
+    status: DockerExecutionStatus = Field(..., description="Final execution outcome status")
+    planned_bytes: int = Field(default=0, ge=0, description="Planned reclaimable bytes")
+    reclaimed_bytes: int = Field(default=0, ge=0, description="Actual verified reclaimed bytes")
+    verified: bool = Field(default=False, description="Whether post-execution state verification confirmed success")
+    error_message: str = Field(default="", description="Error description if execution or verification failed")
+    start_time: str = Field(..., description="ISO timestamp when execution started")
+    end_time: Optional[str] = Field(default=None, description="ISO timestamp when execution completed")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Structured execution and verification telemetry")
+
+    @property
+    def reclaimed_human(self) -> str:
+        return format_bytes(self.reclaimed_bytes)

@@ -131,6 +131,52 @@ class DockerClient:
         except Exception as exc:
             return False, f"Subprocess execution error: {exc}"
 
+    def execute_mutation(self, cmd: list[str]) -> tuple[bool, str]:
+        """
+        Execute an allowlisted Docker mutation command with shell=False and bounded timeout.
+        Permitted commands are strictly:
+        - docker rm <container_id>
+        - docker rmi <image_id>
+        - docker volume rm <volume_id>
+        """
+        if not cmd or cmd[0] != "docker":
+            return False, "Invalid command: must start with 'docker'"
+
+        # Strict command verification
+        if cmd[1] == "rm" and len(cmd) == 3:
+            pass  # docker rm <container_id>
+        elif cmd[1] == "rmi" and len(cmd) == 3:
+            pass  # docker rmi <image_id>
+        elif cmd[1:3] == ["volume", "rm"] and len(cmd) == 4:
+            pass  # docker volume rm <volume_id>
+        else:
+            return False, f"Prohibited Docker mutation command format: {cmd}"
+
+        # Defensive check against forbidden commands (e.g. system prune, stop, kill, prune)
+        for token in cmd:
+            if token.lower() in ("system", "kill", "stop", "restart", "exec", "run", "prune"):
+                return False, f"Prohibited token detected: {token}"
+
+        try:
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+                check=False,
+                shell=False,
+            )
+            if res.returncode != 0:
+                err_msg = res.stderr.strip() or res.stdout.strip()
+                return False, f"Docker execution failed (exit code {res.returncode}): {err_msg}"
+            return True, res.stdout.strip()
+        except FileNotFoundError:
+            return False, "Docker CLI is not installed or not in PATH."
+        except subprocess.TimeoutExpired:
+            return False, f"Docker command timed out after {self.timeout_seconds}s."
+        except Exception as exc:
+            return False, f"Subprocess execution error: {exc}"
+
     def is_daemon_running(self) -> bool:
         """Check if Docker daemon is running and reachable."""
         ok, out = self._execute_readonly(["docker", "info", "--format", "json"])

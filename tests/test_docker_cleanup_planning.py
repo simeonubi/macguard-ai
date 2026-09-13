@@ -455,3 +455,312 @@ def test_zero_high_confidence_docker_plans(sample_evidence):
         assert item.safety_classification == ReclaimConfidence.REVIEW_REQUIRED
         assert item.approval_required is True
         assert item.executable is False
+
+
+def test_docker_cleanup_planning_multi_tag_image_deduplication():
+    """
+    Test that same image ID with multiple tags/aliases produces exactly one plan item
+    and does not double-count reclaimable bytes.
+    """
+    img_id = "sha256:8a607abcdef1234567890"
+    item1 = StorageEvidenceItem(
+        evidence_id="ev_docker_img1",
+        path=f"docker://images/{img_id} (myrepo/app:latest)",
+        canonical_path=f"docker://images/{img_id} (myrepo/app:latest)",
+        size_bytes=500_000_000,
+        item_count=1,
+        category=SmartCategory.CONTAINERS,
+        subcategory="docker_image",
+        source_app="Docker",
+        likely_owner="developer",
+        is_cache=False,
+        is_generated=True,
+        is_developer=True,
+        is_docker=True,
+        risk_level=RiskLevel.LOW,
+        reclaim_confidence=ReclaimConfidence.REVIEW_REQUIRED,
+        cleanup_allowed=False,
+        currently_in_use=False,
+        dependency_evidence="Unreferenced / unused image.",
+    )
+    item2 = StorageEvidenceItem(
+        evidence_id="ev_docker_img2",
+        path=f"docker://images/{img_id} (myrepo/app:v1.0.0)",
+        canonical_path=f"docker://images/{img_id} (myrepo/app:v1.0.0)",
+        size_bytes=500_000_000,
+        item_count=1,
+        category=SmartCategory.CONTAINERS,
+        subcategory="docker_image",
+        source_app="Docker",
+        likely_owner="developer",
+        is_cache=False,
+        is_generated=True,
+        is_developer=True,
+        is_docker=True,
+        risk_level=RiskLevel.LOW,
+        reclaim_confidence=ReclaimConfidence.REVIEW_REQUIRED,
+        cleanup_allowed=False,
+        currently_in_use=False,
+        dependency_evidence="Unreferenced / unused image.",
+    )
+    item3 = StorageEvidenceItem(
+        evidence_id="ev_docker_img3",
+        path=f"docker://images/{img_id} (myrepo/app:edge)",
+        canonical_path=f"docker://images/{img_id} (myrepo/app:edge)",
+        size_bytes=500_000_000,
+        item_count=1,
+        category=SmartCategory.CONTAINERS,
+        subcategory="docker_image",
+        source_app="Docker",
+        likely_owner="developer",
+        is_cache=False,
+        is_generated=True,
+        is_developer=True,
+        is_docker=True,
+        risk_level=RiskLevel.LOW,
+        reclaim_confidence=ReclaimConfidence.REVIEW_REQUIRED,
+        cleanup_allowed=False,
+        currently_in_use=False,
+        dependency_evidence="Unreferenced / unused image.",
+    )
+    # Different image ID
+    other_img_id = "sha256:99999ffffaaaaabbbccc"
+    item_other = StorageEvidenceItem(
+        evidence_id="ev_docker_img4",
+        path=f"docker://images/{other_img_id} (otherapp:latest)",
+        canonical_path=f"docker://images/{other_img_id} (otherapp:latest)",
+        size_bytes=200_000_000,
+        item_count=1,
+        category=SmartCategory.CONTAINERS,
+        subcategory="docker_image",
+        source_app="Docker",
+        likely_owner="developer",
+        is_cache=False,
+        is_generated=True,
+        is_developer=True,
+        is_docker=True,
+        risk_level=RiskLevel.LOW,
+        reclaim_confidence=ReclaimConfidence.REVIEW_REQUIRED,
+        cleanup_allowed=False,
+        currently_in_use=False,
+        dependency_evidence="Unreferenced / unused image.",
+    )
+
+    evidence = StorageInvestigationEvidence(
+        investigation_id="inv_test_dedup",
+        target_path="/Users/test",
+        level=InvestigationLevel.TARGETED,
+        disk_total_bytes=500_000_000_000,
+        disk_used_bytes=300_000_000_000,
+        disk_free_bytes=200_000_000_000,
+        analyzed_bytes=1_700_000_000,
+        candidate_inventory_bytes=1_700_000_000,
+        eligible_for_review_bytes=1_700_000_000,
+        reclaimable_high_confidence_bytes=0,
+        reclaimable_review_required_bytes=700_000_000,
+        protected_bytes=0,
+        items=[item1, item2, item3, item_other],
+        top_consumers=[item1, item2, item3, item_other],
+    )
+
+    planner = DockerCleanupPlanner()
+    plan = planner.create_plan(evidence)
+
+    # Must produce exactly 2 plan items (1 for img_id, 1 for other_img_id)
+    assert len(plan.items) == 2
+
+    img_plan = next(it for it in plan.items if it.resource_id == img_id)
+    assert img_plan.resource_id == img_id
+    assert img_plan.plan_id == f"item_img_{img_id[:12]}"
+    assert img_plan.observed_size_bytes == 500_000_000
+    # Merged tags and evidence IDs
+    assert "myrepo/app:latest" in img_plan.resource_name
+    assert "myrepo/app:v1.0.0" in img_plan.resource_name
+    assert "myrepo/app:edge" in img_plan.resource_name
+    assert set(img_plan.evidence_ids) == {"ev_docker_img1", "ev_docker_img2", "ev_docker_img3"}
+
+    # Proposed bytes: 500MB + 200MB = 700MB, not 1.7GB
+    assert plan.total_proposed_bytes == 700_000_000
+    assert plan.unused_images_count == 2
+
+    # Every plan_id must be strictly unique
+    plan_ids = [it.plan_id for it in plan.items]
+    assert len(plan_ids) == len(set(plan_ids))
+
+
+def test_docker_cleanup_planning_containers_and_volumes_uniqueness():
+    """
+    Test that duplicate container IDs and volume names in evidence are deduplicated
+    to exactly 1 plan item without double-counting bytes.
+    """
+    c_id = "c_abcdef1234567890"
+    v_name = "shared_db_data"
+
+    c_item1 = StorageEvidenceItem(
+        evidence_id="ev_c1",
+        path=f"docker://containers/{c_id} (my_worker)",
+        canonical_path=f"docker://containers/{c_id} (my_worker)",
+        size_bytes=100_000_000,
+        item_count=1,
+        category=SmartCategory.CONTAINERS,
+        subcategory="docker_container",
+        source_app="Docker",
+        likely_owner="developer",
+        is_cache=False,
+        is_generated=True,
+        is_developer=True,
+        is_docker=True,
+        risk_level=RiskLevel.LOW,
+        reclaim_confidence=ReclaimConfidence.REVIEW_REQUIRED,
+        cleanup_allowed=False,
+        currently_in_use=False,
+        dependency_evidence="Stopped container",
+    )
+    c_item2 = StorageEvidenceItem(
+        evidence_id="ev_c2",
+        path=f"docker://containers/{c_id} (my_worker_alias)",
+        canonical_path=f"docker://containers/{c_id} (my_worker_alias)",
+        size_bytes=100_000_000,
+        item_count=1,
+        category=SmartCategory.CONTAINERS,
+        subcategory="docker_container",
+        source_app="Docker",
+        likely_owner="developer",
+        is_cache=False,
+        is_generated=True,
+        is_developer=True,
+        is_docker=True,
+        risk_level=RiskLevel.LOW,
+        reclaim_confidence=ReclaimConfidence.REVIEW_REQUIRED,
+        cleanup_allowed=False,
+        currently_in_use=False,
+        dependency_evidence="Stopped container",
+    )
+
+    v_item1 = StorageEvidenceItem(
+        evidence_id="ev_v1",
+        path=f"docker://volumes/{v_name}",
+        canonical_path=f"docker://volumes/{v_name}",
+        size_bytes=300_000_000,
+        item_count=1,
+        category=SmartCategory.CONTAINERS,
+        subcategory="docker_volume",
+        source_app="Docker",
+        likely_owner="developer",
+        is_cache=False,
+        is_generated=False,
+        is_developer=True,
+        is_docker=True,
+        risk_level=RiskLevel.MEDIUM,
+        reclaim_confidence=ReclaimConfidence.REVIEW_REQUIRED,
+        cleanup_allowed=False,
+        currently_in_use=False,
+        dependency_evidence="Unattached volume",
+    )
+    v_item2 = StorageEvidenceItem(
+        evidence_id="ev_v2",
+        path=f"docker://volumes/{v_name}",
+        canonical_path=f"docker://volumes/{v_name}",
+        size_bytes=300_000_000,
+        item_count=1,
+        category=SmartCategory.CONTAINERS,
+        subcategory="docker_volume",
+        source_app="Docker",
+        likely_owner="developer",
+        is_cache=False,
+        is_generated=False,
+        is_developer=True,
+        is_docker=True,
+        risk_level=RiskLevel.MEDIUM,
+        reclaim_confidence=ReclaimConfidence.REVIEW_REQUIRED,
+        cleanup_allowed=False,
+        currently_in_use=False,
+        dependency_evidence="Unattached volume",
+    )
+
+    # Multiple BuildKit evidence items
+    bc_item1 = StorageEvidenceItem(
+        evidence_id="ev_bc1",
+        path="docker://build_cache",
+        canonical_path="docker://build_cache",
+        size_bytes=400_000_000,
+        item_count=20,
+        category=SmartCategory.CONTAINERS,
+        subcategory="docker_build_cache",
+        source_app="Docker BuildKit",
+        likely_owner="developer",
+        is_cache=True,
+        is_generated=True,
+        is_developer=True,
+        is_docker=True,
+        risk_level=RiskLevel.LOW,
+        reclaim_confidence=ReclaimConfidence.REVIEW_REQUIRED,
+        cleanup_allowed=False,
+        currently_in_use=False,
+        dependency_evidence="BuildKit cache",
+    )
+    bc_item2 = StorageEvidenceItem(
+        evidence_id="ev_bc2",
+        path="docker://build_cache",
+        canonical_path="docker://build_cache",
+        size_bytes=400_000_000,
+        item_count=20,
+        category=SmartCategory.CONTAINERS,
+        subcategory="docker_build_cache",
+        source_app="Docker BuildKit",
+        likely_owner="developer",
+        is_cache=True,
+        is_generated=True,
+        is_developer=True,
+        is_docker=True,
+        risk_level=RiskLevel.LOW,
+        reclaim_confidence=ReclaimConfidence.REVIEW_REQUIRED,
+        cleanup_allowed=False,
+        currently_in_use=False,
+        dependency_evidence="BuildKit cache",
+    )
+
+    evidence = StorageInvestigationEvidence(
+        investigation_id="inv_test_cnt_vol_dedup",
+        target_path="/Users/test",
+        level=InvestigationLevel.TARGETED,
+        disk_total_bytes=500_000_000_000,
+        disk_used_bytes=300_000_000_000,
+        disk_free_bytes=200_000_000_000,
+        analyzed_bytes=1_600_000_000,
+        candidate_inventory_bytes=1_600_000_000,
+        eligible_for_review_bytes=1_600_000_000,
+        reclaimable_high_confidence_bytes=0,
+        reclaimable_review_required_bytes=800_000_000,
+        protected_bytes=0,
+        items=[c_item1, c_item2, v_item1, v_item2, bc_item1, bc_item2],
+        top_consumers=[c_item1, c_item2, v_item1, v_item2, bc_item1, bc_item2],
+    )
+
+    planner = DockerCleanupPlanner()
+    plan = planner.create_plan(evidence)
+
+    # Exactly 3 plan items: 1 container, 1 volume, 1 build cache
+    assert len(plan.items) == 3
+
+    c_plan = next(it for it in plan.items if it.resource_id == c_id)
+    assert c_plan.resource_id == c_id
+    assert c_plan.plan_id == f"item_cnt_{c_id[:12]}"
+    assert set(c_plan.evidence_ids) == {"ev_c1", "ev_c2"}
+
+    v_plan = next(it for it in plan.items if it.resource_id == v_name)
+    assert v_plan.resource_id == v_name
+    assert v_plan.plan_id == f"item_vol_{v_name[:16]}"
+    assert set(v_plan.evidence_ids) == {"ev_v1", "ev_v2"}
+
+    bc_plan = next(it for it in plan.items if it.resource_id == "build_cache")
+    assert bc_plan.plan_id == "item_bc_buildkit"
+    assert bc_plan.executable is False
+    assert bc_plan.safety_classification == ReclaimConfidence.REVIEW_REQUIRED
+
+    # Total proposed bytes: 100MB + 300MB + 400MB = 800MB
+    assert plan.total_proposed_bytes == 800_000_000
+
+    # Uniqueness of plan_ids
+    plan_ids = [it.plan_id for it in plan.items]
+    assert len(plan_ids) == len(set(plan_ids))

@@ -226,18 +226,32 @@ class DockerDetector(BaseStorageDetector):
             items.append(item)
             idx += 1
 
-        # 2B. Inspect Images
+        # 2B. Inspect Images (Consolidated by unique image ID)
+        grouped_images: dict[str, list[DockerImageItem]] = {}
         for img in images:
-            img_ref = f"{img.repository}:{img.tag}" if img.repository != "<none>" else f"dangling:{img.image_id}"
-            img_path = f"docker://images/{img.image_id} ({img_ref})"
-            is_active = img.in_use_by_running_container
+            grouped_images.setdefault(img.image_id, []).append(img)
+
+        for img_id, img_list in grouped_images.items():
+            primary_img = img_list[0]
+            refs = []
+            for im in img_list:
+                ref = f"{im.repository}:{im.tag}" if im.repository != "<none>" else f"dangling:{im.image_id}"
+                if ref not in refs:
+                    refs.append(ref)
+            refs_str = ", ".join(refs) if refs else f"dangling:{img_id}"
+
+            is_active = any(im.in_use_by_running_container for im in img_list)
+            is_in_use_stopped = any(im.in_use_by_stopped_container for im in img_list)
+            is_dangling = all(im.is_dangling for im in img_list)
             conf = ReclaimConfidence.PROTECTED if is_active else ReclaimConfidence.REVIEW_REQUIRED
+
+            img_path = f"docker://images/{img_id} ({refs_str})"
 
             item = StorageEvidenceItem(
                 evidence_id=f"ev_docker_{idx:03d}",
                 path=img_path,
                 canonical_path=img_path,
-                size_bytes=img.size_bytes,
+                size_bytes=primary_img.size_bytes,
                 item_count=1,
                 category=SmartCategory.CONTAINERS,
                 subcategory="docker_image",
@@ -257,11 +271,11 @@ class DockerDetector(BaseStorageDetector):
                 reproducible_or_redownloadable=True,
                 dependency_evidence=(
                     "Referenced by running container(s)." if is_active
-                    else ("Referenced by stopped container(s)." if img.in_use_by_stopped_container else "Unreferenced / unused image.")
+                    else ("Referenced by stopped container(s)." if is_in_use_stopped else "Unreferenced / unused image.")
                 ),
-                usage_evidence=f"Image in use by running containers: {is_active}, dangling: {img.is_dangling}.",
-                cleanup_consequence=f"Image '{img_ref}' can be removed via 'docker image rm {img.image_id}' if no longer needed.",
-                evidence_notes=f"Docker image '{img_ref}' ({img.size_bytes} bytes). Dangling: {img.is_dangling}.",
+                usage_evidence=f"Image in use by running containers: {is_active}, dangling: {is_dangling}.",
+                cleanup_consequence=f"Image '{refs_str}' can be removed via 'docker image rm {img_id}' if no longer needed.",
+                evidence_notes=f"Docker image '{refs_str}' ({primary_img.size_bytes} bytes). Dangling: {is_dangling}.",
             )
             items.append(item)
             idx += 1

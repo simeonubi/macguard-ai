@@ -68,6 +68,7 @@ class DockerCleanupPlanner:
     ) -> DockerCleanupPlan:
         """
         Create a deterministic Docker cleanup plan from structured investigation evidence.
+        Guarantees strict 1:1 uniqueness per immutable Docker resource ID.
         """
         pid = plan_id or f"dplan_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(3)}"
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -76,13 +77,18 @@ class DockerCleanupPlanner:
         total_proposed = 0
         volume_warnings: list[str] = []
 
-        running_cnt = 0
-        stopped_cnt = 0
-        active_img = 0
-        unused_img = 0
-        attached_vol = 0
-        unattached_vol = 0
-        host_targets = 0
+        seen_containers: dict[str, DockerCleanupPlanItem] = {}
+        seen_images: dict[str, DockerCleanupPlanItem] = {}
+        seen_volumes: dict[str, DockerCleanupPlanItem] = {}
+        seen_build_cache: bool = False
+
+        seen_running_containers: set[str] = set()
+        seen_stopped_containers: set[str] = set()
+        seen_active_images: set[str] = set()
+        seen_unused_images: set[str] = set()
+        seen_attached_volumes: set[str] = set()
+        seen_unattached_volumes: set[str] = set()
+        seen_host_targets: set[str] = set()
 
         docker_items = [it for it in evidence.items if it.is_docker]
 
@@ -91,17 +97,26 @@ class DockerCleanupPlanner:
 
             # 1. Docker Virtual Disk & Desktop Root: ALWAYS PROTECTED, NEVER PLANNED
             if subcat in ("docker_virtual_disk", "docker_desktop_container", "docker_cli_config"):
-                host_targets += 1
+                seen_host_targets.add(it.path)
                 continue
 
             # 2. Containers
             if subcat == "docker_container":
+                c_id, c_name = self._parse_container_info(it.path)
                 if it.currently_in_use or it.reclaim_confidence == ReclaimConfidence.PROTECTED:
-                    running_cnt += 1
+                    seen_running_containers.add(c_id)
                     continue
 
-                stopped_cnt += 1
-                c_id, c_name = self._parse_container_info(it.path)
+                seen_stopped_containers.add(c_id)
+                if c_id in seen_containers:
+                    existing = seen_containers[c_id]
+                    if it.evidence_id not in existing.evidence_ids:
+                        idx = plan_items.index(existing)
+                        updated = existing.model_copy(update={"evidence_ids": [*existing.evidence_ids, it.evidence_id]})
+                        plan_items[idx] = updated
+                        seen_containers[c_id] = updated
+                    continue
+
                 item = DockerCleanupPlanItem(
                     plan_id=f"item_cnt_{c_id[:12]}",
                     resource_type=DockerResourceType.CONTAINER,
@@ -124,17 +139,38 @@ class DockerCleanupPlanner:
                         "mounts_or_image": it.dependency_evidence,
                     },
                 )
+                seen_containers[c_id] = item
                 plan_items.append(item)
                 total_proposed += it.size_bytes
 
             # 3. Images
             elif subcat == "docker_image":
+                img_id, img_ref = self._parse_image_info(it.path)
                 if it.currently_in_use or it.reclaim_confidence == ReclaimConfidence.PROTECTED:
-                    active_img += 1
+                    seen_active_images.add(img_id)
                     continue
 
-                unused_img += 1
-                img_id, img_ref = self._parse_image_info(it.path)
+                seen_unused_images.add(img_id)
+                if img_id in seen_images:
+                    existing = seen_images[img_id]
+                    updated_ev_ids = existing.evidence_ids
+                    if it.evidence_id not in updated_ev_ids:
+                        updated_ev_ids = [*updated_ev_ids, it.evidence_id]
+
+                    # Merge new tag alias into resource_name if not already included
+                    updated_name = existing.resource_name
+                    if img_ref and img_ref not in updated_name:
+                        updated_name = f"{existing.resource_name}, {img_ref}"
+
+                    idx = plan_items.index(existing)
+                    updated = existing.model_copy(update={
+                        "evidence_ids": updated_ev_ids,
+                        "resource_name": updated_name,
+                    })
+                    plan_items[idx] = updated
+                    seen_images[img_id] = updated
+                    continue
+
                 item = DockerCleanupPlanItem(
                     plan_id=f"item_img_{img_id[:12]}",
                     resource_type=DockerResourceType.IMAGE,
@@ -156,17 +192,27 @@ class DockerCleanupPlanner:
                         "is_dangling": "dangling" in it.path.lower(),
                     },
                 )
+                seen_images[img_id] = item
                 plan_items.append(item)
                 total_proposed += it.size_bytes
 
             # 4. Volumes
             elif subcat == "docker_volume":
+                vol_name = self._parse_volume_name(it.path)
                 if it.currently_in_use or it.reclaim_confidence == ReclaimConfidence.PROTECTED:
-                    attached_vol += 1
+                    seen_attached_volumes.add(vol_name)
                     continue
 
-                unattached_vol += 1
-                vol_name = self._parse_volume_name(it.path)
+                seen_unattached_volumes.add(vol_name)
+                if vol_name in seen_volumes:
+                    existing = seen_volumes[vol_name]
+                    if it.evidence_id not in existing.evidence_ids:
+                        idx = plan_items.index(existing)
+                        updated = existing.model_copy(update={"evidence_ids": [*existing.evidence_ids, it.evidence_id]})
+                        plan_items[idx] = updated
+                        seen_volumes[vol_name] = updated
+                    continue
+
                 warn_msg = f"HIGH RISK: Volume '{vol_name}' is unattached but may contain persistent database or application data."
                 volume_warnings.append(warn_msg)
 
@@ -190,11 +236,16 @@ class DockerCleanupPlanner:
                         "attachment_status": it.usage_evidence,
                     },
                 )
+                seen_volumes[vol_name] = item
                 plan_items.append(item)
                 total_proposed += it.size_bytes
 
             # 5. Build Cache
             elif subcat == "docker_build_cache":
+                if seen_build_cache:
+                    continue
+                seen_build_cache = True
+
                 item = DockerCleanupPlanItem(
                     plan_id="item_bc_buildkit",
                     resource_type=DockerResourceType.BUILD_CACHE,
@@ -216,6 +267,14 @@ class DockerCleanupPlanner:
                 )
                 plan_items.append(item)
                 total_proposed += it.size_bytes
+
+        running_cnt = len(seen_running_containers)
+        stopped_cnt = len(seen_stopped_containers)
+        active_img = len(seen_active_images)
+        unused_img = len(seen_unused_images)
+        attached_vol = len(seen_attached_volumes)
+        unattached_vol = len(seen_unattached_volumes)
+        host_targets = len(seen_host_targets)
 
         protected_total = host_targets + running_cnt + active_img + attached_vol
 

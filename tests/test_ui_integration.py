@@ -1338,6 +1338,124 @@ def test_render_recommendations_page_ai_explanation_timeout_and_unavailable_stat
     assert rec.candidate.risk_level == RiskLevel.LOW
 
 
+def test_storage_investigation_docker_cleanup_checklist_renders_without_duplicate_keys():
+    """
+    Test that Storage Investigator page renders Docker cleanup checklist with unique widget keys
+    even when evidence contains multiple tags or aliases for the same underlying image ID.
+    """
+    import streamlit as st
+    from app.analysis.docker_planner import DockerCleanupPlanner
+    from app.models.category import SmartCategory
+    from app.models.docker_cleanup import DockerCleanupPlan, DockerCleanupPlanItem, DockerResourceType
+    from app.models.investigation import (
+        CleanupPlan,
+        InvestigationLevel,
+        ReclaimConfidence,
+        StorageEvidenceItem,
+        StorageInvestigationEvidence,
+        StorageInvestigationResult,
+    )
+    from app.ui.state import init_app_state
+    from app.ui.storage_investigation_view import render_storage_investigation_page
 
+    st.session_state.clear()
+    init_app_state()
 
+    img_id = "sha256:8a607abcdef1234567890"
+    item1 = StorageEvidenceItem(
+        evidence_id="ev_docker_img1",
+        path=f"docker://images/{img_id} (myrepo/app:latest)",
+        canonical_path=f"docker://images/{img_id} (myrepo/app:latest)",
+        size_bytes=500_000_000,
+        item_count=1,
+        category=SmartCategory.CONTAINERS,
+        subcategory="docker_image",
+        source_app="Docker",
+        likely_owner="developer",
+        is_cache=False,
+        is_generated=True,
+        is_developer=True,
+        is_docker=True,
+        risk_level=RiskLevel.LOW,
+        reclaim_confidence=ReclaimConfidence.REVIEW_REQUIRED,
+        cleanup_allowed=False,
+        currently_in_use=False,
+        dependency_evidence="Unreferenced / unused image.",
+    )
+    item2 = StorageEvidenceItem(
+        evidence_id="ev_docker_img2",
+        path=f"docker://images/{img_id} (myrepo/app:v1.0.0)",
+        canonical_path=f"docker://images/{img_id} (myrepo/app:v1.0.0)",
+        size_bytes=500_000_000,
+        item_count=1,
+        category=SmartCategory.CONTAINERS,
+        subcategory="docker_image",
+        source_app="Docker",
+        likely_owner="developer",
+        is_cache=False,
+        is_generated=True,
+        is_developer=True,
+        is_docker=True,
+        risk_level=RiskLevel.LOW,
+        reclaim_confidence=ReclaimConfidence.REVIEW_REQUIRED,
+        cleanup_allowed=False,
+        currently_in_use=False,
+        dependency_evidence="Unreferenced / unused image.",
+    )
 
+    evidence = StorageInvestigationEvidence(
+        investigation_id="inv_test_ui_dedup",
+        target_path="/Users/test",
+        level=InvestigationLevel.TARGETED,
+        disk_total_bytes=500_000_000_000,
+        disk_used_bytes=300_000_000_000,
+        disk_free_bytes=200_000_000_000,
+        analyzed_bytes=1_000_000_000,
+        candidate_inventory_bytes=1_000_000_000,
+        eligible_for_review_bytes=500_000_000,
+        reclaimable_high_confidence_bytes=0,
+        reclaimable_review_required_bytes=500_000_000,
+        protected_bytes=0,
+        items=[item1, item2],
+        top_consumers=[item1, item2],
+    )
+
+    planner = DockerCleanupPlanner()
+    docker_plan = planner.create_plan(evidence)
+
+    inv_result = StorageInvestigationResult(
+        evidence=evidence,
+        cleanup_plan=CleanupPlan(
+            investigation_id="inv_test_ui_dedup",
+            high_confidence_items=[],
+            review_required_items=[],
+            protected_items=[],
+            total_reclaimable_high_confidence_bytes=0,
+            total_reclaimable_review_required_bytes=500_000_000,
+            total_protected_bytes=0,
+        ),
+        summary_text="Storage Investigation Complete. 500MB reviewable.",
+        docker_plan=docker_plan,
+    )
+
+    st.session_state.investigation_result = inv_result
+
+    # Track all keys passed to st.checkbox to verify strict uniqueness
+    checkbox_keys = []
+    original_checkbox = st.checkbox
+
+    def mock_checkbox(label, *args, **kwargs):
+        key = kwargs.get("key")
+        if key:
+            if key in checkbox_keys:
+                raise pytest.fail(f"Duplicate Streamlit element key detected: '{key}'")
+            checkbox_keys.append(key)
+        return False
+
+    with patch("streamlit.checkbox", side_effect=mock_checkbox):
+        render_storage_investigation_page()
+
+    # Verify that the checkbox key for the image plan item was registered exactly once
+    expected_img_key = f"chk_ditem_item_img_{img_id[:12]}"
+    assert expected_img_key in checkbox_keys
+    assert checkbox_keys.count(expected_img_key) == 1

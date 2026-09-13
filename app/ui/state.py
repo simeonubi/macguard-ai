@@ -135,6 +135,8 @@ MODE_TO_DEFAULT_TAB = {
 
 TAB_TO_MODE = {
     "Dashboard": "ANALYZE",
+    "StorageInvestigator": "ANALYZE",
+    "Storage Investigator": "ANALYZE",
     "Scan": "ANALYZE",
     "DeveloperStorage": "ANALYZE",
     "Developer Storage": "ANALYZE",
@@ -177,6 +179,8 @@ def set_operating_mode(mode_name: str) -> None:
     elif mode_name == "ANALYZE":
         if st.session_state.get("current_tab") not in [
             "Dashboard",
+            "StorageInvestigator",
+            "Storage Investigator",
             "Scan",
             "DeveloperStorage",
             "Developer Storage",
@@ -204,6 +208,8 @@ def navigate_to(tab_name: str) -> None:
     """
     valid_tabs = [
         "Dashboard",
+        "StorageInvestigator",
+        "Storage Investigator",
         "Scan",
         "DeveloperStorage",
         "Developer Storage",
@@ -224,6 +230,8 @@ def navigate_to(tab_name: str) -> None:
 
     if tab_name in ("StorageIntelligence", "Storage Intelligence"):
         canonical_tab = "StorageIntelligence"
+    elif tab_name in ("StorageInvestigator", "Storage Investigator"):
+        canonical_tab = "StorageInvestigator"
     elif tab_name in ("DeveloperStorage", "Developer Storage"):
         canonical_tab = "DeveloperStorage"
     elif tab_name in ("Duplicates", "Duplicate Explorer", "DuplicateExplorer"):

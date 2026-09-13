@@ -556,6 +556,13 @@ def test_navigation_developer_storage_registration() -> None:
     assert st.session_state.current_mode == "ANALYZE"
 
 
+def test_navigation_storage_investigator_registration() -> None:
+    """Test navigating to StorageInvestigator switches tab and syncs ANALYZE mode."""
+    navigate_to("StorageInvestigator")
+    assert st.session_state.current_tab == "StorageInvestigator"
+    assert st.session_state.current_mode == "ANALYZE"
+
+
 def test_navigation_duplicates_registration() -> None:
     """Test navigating to Duplicates switches tab and syncs ANALYZE mode."""
     navigate_to("Duplicates")
@@ -564,12 +571,15 @@ def test_navigation_duplicates_registration() -> None:
 
 
 def test_navigation_alias_redirection() -> None:
-    """Test navigating using aliases ('Developer Storage', 'Duplicate Explorer')."""
+    """Test navigating using aliases ('Developer Storage', 'Duplicate Explorer', 'Storage Investigator')."""
     navigate_to("Developer Storage")
     assert st.session_state.current_tab == "DeveloperStorage"
 
     navigate_to("Duplicate Explorer")
     assert st.session_state.current_tab == "Duplicates"
+
+    navigate_to("Storage Investigator")
+    assert st.session_state.current_tab == "StorageInvestigator"
 
 
 def test_navigation_state_synchronization() -> None:
@@ -579,6 +589,16 @@ def test_navigation_state_synchronization() -> None:
     assert st.session_state.current_tab == "DeveloperStorage"
     assert st.session_state.nav_selectbox == "DeveloperStorage"
     assert st.session_state.mode_radio == "ANALYZE"
+
+
+def test_navigation_storage_investigator_analyze_mode_preservation() -> None:
+    """Test that setting or remaining in ANALYZE mode preserves StorageInvestigator and does not reset to Dashboard."""
+    navigate_to("StorageInvestigator")
+    set_operating_mode("ANALYZE")
+    sync_mode_and_navigation()
+    assert st.session_state.current_tab == "StorageInvestigator"
+    assert st.session_state.current_mode == "ANALYZE"
+    assert st.session_state.nav_selectbox == "StorageInvestigator"
 
 
 def test_navigation_widget_lifecycle_safety() -> None:

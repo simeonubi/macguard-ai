@@ -179,7 +179,36 @@ def render_storage_investigation_page() -> None:
             })
         st.dataframe(pd.DataFrame(docker_table_data), use_container_width=True, hide_index=True)
 
-    # 6. Cleanup Plan & Batch Approval Section
+        # 5C. Deterministic Docker Cleanup Planning (Phase 14A - Planning Only)
+        from app.analysis.docker_planner import DockerCleanupPlanner
+        docker_planner = DockerCleanupPlanner()
+        dplan = docker_planner.create_plan(evidence)
+
+        if dplan.items:
+            st.markdown("#### 📋 **Proposed Docker Cleanup Review Candidates (Planning Only)**")
+            st.caption("Deterministic review proposals for unused resources. Phase 14A is planning-only; no deletion commands are executed.")
+
+            for warn in dplan.volume_warnings:
+                st.warning(f"⚠️ {warn}")
+
+            plan_table_data = []
+            for pit in dplan.items:
+                plan_table_data.append({
+                    "Plan ID": pit.plan_id,
+                    "Resource Type": pit.resource_type.value,
+                    "Resource Name / Ref": pit.resource_name,
+                    "Observed Size": pit.size_human,
+                    "Proposed Action": pit.requested_action,
+                    "Safety Tier": pit.safety_classification.value,
+                    "Approval Required": "Yes (Review Required)" if pit.approval_required else "No",
+                    "High Risk": "⚠️ YES (Persistent Data)" if pit.is_high_risk else "No",
+                    "Consequence": pit.consequence,
+                })
+            st.info(
+                f"📊 **Proposed Candidates:** {dplan.review_items_count} review candidates ({dplan.total_proposed_human}). "
+                f"**Protected Exclusions:** {dplan.protected_items_count} items ({dplan.running_containers_count} running containers, "
+                f"{dplan.active_images_count} active images, {dplan.attached_volumes_count} attached volumes, {dplan.protected_host_targets_count} host targets)."
+            )
     st.markdown("---")
     st.markdown("### 📦 **Practical Cleanup Plan & Batch Approval**")
     st.caption("Approve verified cleanup batches. Every action is individually verified, HMAC-signed, and moved to Trash.")

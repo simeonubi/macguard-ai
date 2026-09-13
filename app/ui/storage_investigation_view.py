@@ -325,6 +325,11 @@ def render_storage_investigation_page() -> None:
         st.markdown("---")
         st.markdown("### 📜 **Batch Execution Results**")
         if rep.successful_items > 0:
-            st.success(f"✅ Successfully moved {rep.successful_items} items to macOS Trash. Freed: **{rep.bytes_freed_human}**.")
+            st.success(
+                f"✅ **Successfully moved {rep.successful_items} item(s) to macOS Trash.**\n\n"
+                f"- **Moved to Trash:** `{rep.bytes_freed_human}` ({rep.bytes_freed:,} bytes)\n"
+                f"- **Active-path storage removed:** `{rep.bytes_freed_human}`\n"
+                f"- **Physical disk space:** *Not yet reclaimed — Trash must be emptied (files preserved safely in macOS Trash)*"
+            )
         if rep.failed_items > 0:
             st.error(f"⚠️ {rep.failed_items} items could not be moved. Errors: {'; '.join(rep.errors)}")

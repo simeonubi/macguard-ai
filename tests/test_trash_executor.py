@@ -587,3 +587,52 @@ def test_trash_executor_handles_missing_source_safely() -> None:
         assert result.status == ExecutionStatus.FAILED
         assert "does not exist" in result.message.lower()
         assert service.get_status(ar.approval_id) == ApprovalStatus.FAILED
+
+
+def test_trash_executor_post_cleanup_metric_semantics() -> None:
+    """
+    Regression test verifying strict post-cleanup storage metric semantics:
+    1. 'Moved to Trash' accurately reflects bytes moved from active path.
+    2. 'Active-path storage removed' is distinguished from physical APFS disk free space.
+    3. 'Physical disk space' is explicitly marked as not yet reclaimed until Trash is emptied.
+    4. Zero false claim of immediate physical disk space gain.
+    """
+    with tempfile.TemporaryDirectory() as sandbox_dir:
+        sandbox_path = Path(sandbox_dir).resolve()
+        cache_dir = sandbox_path / "Caches" / "myapp"
+        cache_dir.mkdir(parents=True)
+        test_file = cache_dir / "cache_data.bin"
+        file_size = 1024 * 1024 * 5  # 5 MB
+        test_file.write_bytes(b"X" * file_size)
+        trash_root = sandbox_path / ".Trash"
+
+        validator = PathValidator(custom_allowlist_roots=[str(cache_dir)])
+        service = ApprovalService(path_validator=validator)
+
+        cand = _make_candidate(str(test_file), size_bytes=file_size)
+        rec = _make_recommendation(cand)
+        r, _ = service.request_approval(rec)
+        assert r is not None
+        ar, _ = service.approve(r.approval_id, explicit_consent=True)
+        assert ar is not None
+
+        planner = ExecutionPlanner(approval_service=service, path_validator=validator)
+        plan, _ = planner.create_plan(approval_record=ar, action=ExecutionAction.TRASH)
+        assert plan is not None
+
+        executor = TrashExecutor(approval_service=service, path_validator=validator, trash_root=trash_root)
+        result = executor.execute_trash(plan, custom_trash_root=trash_root)
+
+        assert result.status == ExecutionStatus.TRASH_SUCCEEDED
+        assert result.verified is True
+        assert result.integrity_verified is True
+        assert result.reclaimed_bytes == file_size
+        assert result.bytes_moved_to_trash == file_size
+        assert result.bytes_moved_human == "5.00 MB"
+        assert result.physical_disk_reclaim_status == "Not yet reclaimed — Trash must be emptied"
+
+        # Verify semantic message content
+        assert "Moved to Trash: 5.00 MB" in result.message
+        assert "Active-path storage removed" in result.message
+        assert "Physical disk space will be reclaimed when Trash is emptied" in result.message
+        assert "No permanent deletion occurred" in result.message

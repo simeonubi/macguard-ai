@@ -180,3 +180,39 @@ def test_batch_approval_blocks_unallowlisted_target(batch_sandbox: tuple[Path, P
     assert report.successful_items == 0
     assert report.failed_items == 1
     assert unallowlisted_target.exists()  # Remained untouched
+
+
+def test_batch_execution_report_storage_metric_semantics(batch_sandbox: tuple[Path, Path, Path], tmp_path: Path) -> None:
+    """
+    Regression test verifying BatchExecutionReport storage metric properties:
+    - bytes_moved_to_trash accurately mirrors bytes_freed
+    - bytes_moved_to_trash_human produces formatted string
+    - physical_disk_reclaimed_status states 'Not yet reclaimed — Trash must be emptied'
+    """
+    home, clean_root, trash_root = batch_sandbox
+    validator = PathValidator(home_dir=home, custom_allowlist_roots=[clean_root])
+    approval_service = ApprovalService(path_validator=validator)
+    coordinator = BatchApprovalCoordinator(
+        approval_service=approval_service,
+        path_validator=validator,
+    )
+
+    target_dir = clean_root / "pip"
+    item = CleanupPlanItem(
+        evidence_id="ev_pip_test",
+        path=str(target_dir),
+        canonical_path=str(target_dir),
+        size_bytes=1024 * 1024,
+        category=SmartCategory.PACKAGE_MANAGERS,
+        subcategory="pip_cache",
+        tier=ReclaimConfidence.HIGH_CONFIDENCE,
+    )
+
+    report = coordinator.approve_and_execute_batch(items=[item], custom_trash_root=trash_root)
+
+    assert report.successful_items == 1
+    assert report.bytes_freed == 1024 * 1024
+    assert report.bytes_moved_to_trash == 1024 * 1024
+    assert report.bytes_moved_to_trash_human == "1.00 MB"
+    assert report.bytes_freed_human == "1.00 MB"
+    assert report.physical_disk_reclaimed_status == "Not yet reclaimed — Trash must be emptied"

@@ -917,7 +917,8 @@ class TrashExecutor:
         # 11. Success: Complete and Consume Approval
         success_msg = (
             f"Successfully moved '{canonical_source_str}' to macOS Trash at '{dest_path}'. "
-            f"Reclaimed {format_bytes(actual_reclaim_bytes)} ({actual_reclaim_bytes:,} bytes). "
+            f"Moved to Trash: {format_bytes(actual_reclaim_bytes)} ({actual_reclaim_bytes:,} bytes). "
+            "Active-path storage removed. Physical disk space will be reclaimed when Trash is emptied. "
             "Verified source absence, destination presence, and snapshot integrity. No permanent deletion occurred."
         )
         self._approval_service.complete_execution(plan.approval_id, success=True, reason=success_msg)

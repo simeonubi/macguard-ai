@@ -150,7 +150,9 @@ def render_execution_page() -> None:
                                 st.success(
                                     f"✅ **Move Verified & Succeeded!**\n\n"
                                     f"- **Execution ID:** `{result.execution_id}`\n"
-                                    f"- **Reclaimed Space:** {format_bytes(result.reclaimed_bytes)}\n"
+                                    f"- **Moved to Trash:** {format_bytes(result.reclaimed_bytes)}\n"
+                                    f"- **Active-path storage removed:** {format_bytes(result.reclaimed_bytes)}\n"
+                                    f"- **Physical disk space:** *Not yet reclaimed — Trash must be emptied*\n"
                                     f"- **Destination:** `{result.trash_destination_path}`\n"
                                     f"- **Integrity Verified:** Yes (`source absent` and `destination verified in Trash`)\n"
                                     f"- **Audit Event:** Persisted to SQLite"

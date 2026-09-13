@@ -225,3 +225,18 @@ class TrashExecutionResult(BaseModel):
         description="Explicit safety confirmation.",
     )
 
+    @property
+    def bytes_moved_to_trash(self) -> int:
+        """Exact bytes moved from active path into macOS Trash."""
+        return self.reclaimed_bytes
+
+    @property
+    def bytes_moved_human(self) -> str:
+        """Formatted human-readable size of bytes moved to macOS Trash."""
+        from app.tools.storage_scanner import format_bytes
+        return format_bytes(self.reclaimed_bytes)
+
+    @property
+    def physical_disk_reclaim_status(self) -> str:
+        """Physical disk space status note."""
+        return "Not yet reclaimed — Trash must be emptied"

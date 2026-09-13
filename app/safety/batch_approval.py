@@ -72,8 +72,23 @@ class BatchExecutionReport:
     errors: list[str] = field(default_factory=list)
 
     @property
+    def bytes_moved_to_trash(self) -> int:
+        """Exact bytes moved from active source paths into macOS Trash."""
+        return self.bytes_freed
+
+    @property
+    def bytes_moved_to_trash_human(self) -> str:
+        """Human-readable size of bytes moved to macOS Trash."""
+        return format_bytes(self.bytes_freed)
+
+    @property
     def bytes_freed_human(self) -> str:
         return format_bytes(self.bytes_freed)
+
+    @property
+    def physical_disk_reclaimed_status(self) -> str:
+        """Physical disk reclamation note."""
+        return "Not yet reclaimed — Trash must be emptied"
 
 
 class BatchApprovalCoordinator:

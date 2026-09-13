@@ -74,6 +74,31 @@ def _sample_context(path: str = "/Users/test/Library/Caches/app") -> AnalysisCon
 # 1. CLIENT TESTS (MOCKED OLLAMA)
 # =====================================================================
 
+def test_ollama_config_defaults():
+    config = OllamaConfig()
+    assert config.base_url == "http://localhost:11434"
+    assert config.model == "llama3.2"
+    assert config.timeout_seconds == 120.0
+
+
+def test_ollama_config_from_env_defaults(monkeypatch):
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
+    monkeypatch.delenv("OLLAMA_TIMEOUT", raising=False)
+
+    config = OllamaConfig.from_env()
+    assert config.base_url == "http://localhost:11434"
+    assert config.model == "llama3.2"
+    assert config.timeout_seconds == 120.0
+
+
+def test_ollama_config_from_env_invalid_timeout(monkeypatch):
+    monkeypatch.setenv("OLLAMA_TIMEOUT", "invalid_number")
+
+    config = OllamaConfig.from_env()
+    assert config.timeout_seconds == 120.0
+
+
 def test_ollama_config_from_env(monkeypatch):
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/")
     monkeypatch.setenv("OLLAMA_MODEL", "mistral:latest")

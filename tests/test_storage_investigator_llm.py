@@ -166,3 +166,63 @@ def test_ollama_investigator_offline_fallback(sample_evidence_and_plan) -> None:
     assert "Local AI unavailable" in (result.ai_status_message or "")
     assert result.evidence.total_reclaimable_bytes == 100_000_000
     assert len(result.llm_findings) >= 1  # Deterministic findings populated
+
+
+def test_ollama_investigator_timeout_fallback(sample_evidence_and_plan) -> None:
+    """Ensure Ollama timeout falls back safely to deterministic investigation."""
+    evidence, plan = sample_evidence_and_plan
+    mock_client = MagicMock(spec=OllamaClient)
+    mock_client.generate.side_effect = OllamaTimeoutError("Ollama request timed out after 120.0s")
+
+    investigator = OllamaStorageInvestigator(client=mock_client)
+    result = investigator.investigate(evidence, plan, fallback_to_deterministic=True)
+
+    assert result.is_ai_reasoned is False
+    assert "Local AI unavailable" in (result.ai_status_message or "")
+    assert result.evidence.total_reclaimable_bytes == 100_000_000
+    assert len(result.llm_findings) >= 1
+
+
+def test_ollama_investigator_bounds_evidence_payload(sample_evidence_and_plan) -> None:
+    """Ensure evidence payload is bounded to top 15 items even with 50 items."""
+    evidence, plan = sample_evidence_and_plan
+    many_items = []
+    for i in range(50):
+        many_items.append(
+            StorageEvidenceItem(
+                evidence_id=f"ev_item_{i:03d}",
+                path=f"/Users/test/item_{i}",
+                canonical_path=f"/Users/test/item_{i}",
+                size_bytes=(50 - i) * 1_000_000,
+                category=SmartCategory.CACHES,
+                risk_level=RiskLevel.LOW,
+                reclaim_confidence=ReclaimConfidence.HIGH_CONFIDENCE,
+                cleanup_allowed=True,
+            )
+        )
+    evidence_large = StorageInvestigationEvidence(
+        investigation_id="inv_large",
+        level=InvestigationLevel.TARGETED,
+        target_path="/Users/test",
+        disk_total_bytes=500_000_000_000,
+        disk_used_bytes=400_000_000_000,
+        disk_free_bytes=100_000_000_000,
+        analyzed_bytes=600_000_000,
+        candidate_inventory_bytes=600_000_000,
+        eligible_for_review_bytes=100_000_000,
+        reclaimable_high_confidence_bytes=100_000_000,
+        reclaimable_review_required_bytes=0,
+        protected_bytes=0,
+        items=many_items,
+        top_consumers=many_items[:15],
+    )
+
+    investigator = OllamaStorageInvestigator()
+    payload_json = investigator.build_evidence_payload(evidence_large)
+    parsed = json.loads(payload_json)
+
+    assert "evidence_items" in parsed
+    assert len(parsed["evidence_items"]) == 15
+    # Ensure largest item is first
+    assert parsed["evidence_items"][0]["evidence_id"] == "ev_item_000"
+    assert parsed["evidence_items"][0]["size_bytes"] == 50_000_000

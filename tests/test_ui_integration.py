@@ -1459,3 +1459,144 @@ def test_storage_investigation_docker_cleanup_checklist_renders_without_duplicat
     expected_img_key = f"chk_ditem_item_img_{img_id[:12]}"
     assert expected_img_key in checkbox_keys
     assert checkbox_keys.count(expected_img_key) == 1
+
+
+def test_storage_investigation_ui_local_ai_triggers_when_result_exists():
+    """
+    Ensure clicking 'Investigate with Local AI' triggers a fresh AI investigation
+    even if st.session_state.investigation_result already contains a deterministic result.
+    """
+    import streamlit as st
+    from app.analysis.storage_investigator import StorageInvestigator
+    from app.llm.storage_investigator_llm import OllamaStorageInvestigator
+    from app.models.investigation import (
+        CleanupPlan,
+        InvestigationLevel,
+        StorageInvestigationEvidence,
+        StorageInvestigationResult,
+    )
+    from app.ui.state import init_app_state
+    from app.ui.storage_investigation_view import render_storage_investigation_page
+
+    st.session_state.clear()
+    init_app_state()
+
+    # Pre-populate session state with an existing deterministic investigation result
+    old_evidence = StorageInvestigationEvidence(
+        investigation_id="inv_old_deterministic",
+        target_path="/Users/test",
+        level=InvestigationLevel.TARGETED,
+        disk_total_bytes=500_000_000_000,
+        disk_used_bytes=300_000_000_000,
+        disk_free_bytes=200_000_000_000,
+        analyzed_bytes=100_000_000,
+        candidate_inventory_bytes=100_000_000,
+        eligible_for_review_bytes=100_000_000,
+        reclaimable_high_confidence_bytes=100_000_000,
+        reclaimable_review_required_bytes=0,
+        protected_bytes=0,
+        items=[],
+        top_consumers=[],
+    )
+    old_plan = CleanupPlan(
+        investigation_id="inv_old_deterministic",
+        high_confidence_items=[],
+        total_reclaimable_bytes=100_000_000,
+    )
+    old_result = StorageInvestigationResult(
+        evidence=old_evidence,
+        cleanup_plan=old_plan,
+        summary_text="Old deterministic summary",
+        is_ai_reasoned=False,
+    )
+    st.session_state.investigation_result = old_result
+
+    # Mock st.button so that 'ai_btn' (Investigate with Local AI) returns True, run_btn returns False
+    def mock_button(label, *args, **kwargs):
+        if "Local AI" in label:
+            return True
+        return False
+
+    mock_ai_result = StorageInvestigationResult(
+        evidence=old_evidence,
+        cleanup_plan=old_plan,
+        summary_text="New Local AI reasoned summary",
+        is_ai_reasoned=True,
+        ai_status_message="Reasoned with local AI (Ollama).",
+    )
+
+    with patch("streamlit.button", side_effect=mock_button), \
+         patch.object(StorageInvestigator, "investigate", return_value=(old_evidence, old_plan)) as mock_inv, \
+         patch.object(OllamaStorageInvestigator, "investigate", return_value=mock_ai_result) as mock_llm_inv:
+
+        render_storage_investigation_page()
+
+        # Both the base investigator and OllamaStorageInvestigator.investigate MUST have been called
+        assert mock_inv.called
+        assert mock_llm_inv.called
+        assert st.session_state.investigation_result.is_ai_reasoned is True
+        assert st.session_state.investigation_result.summary_text == "New Local AI reasoned summary"
+
+
+def test_storage_investigation_ui_deterministic_button():
+    """
+    Ensure clicking 'Investigate My Storage' invokes investigate_deterministic (is_ai_reasoned=False).
+    """
+    import streamlit as st
+    from app.analysis.storage_investigator import StorageInvestigator
+    from app.llm.storage_investigator_llm import OllamaStorageInvestigator
+    from app.models.investigation import (
+        CleanupPlan,
+        InvestigationLevel,
+        StorageInvestigationEvidence,
+        StorageInvestigationResult,
+    )
+    from app.ui.state import init_app_state
+    from app.ui.storage_investigation_view import render_storage_investigation_page
+
+    st.session_state.clear()
+    init_app_state()
+
+    evidence = StorageInvestigationEvidence(
+        investigation_id="inv_det",
+        target_path="/Users/test",
+        level=InvestigationLevel.TARGETED,
+        disk_total_bytes=500_000_000_000,
+        disk_used_bytes=300_000_000_000,
+        disk_free_bytes=200_000_000_000,
+        analyzed_bytes=100_000_000,
+        candidate_inventory_bytes=100_000_000,
+        eligible_for_review_bytes=100_000_000,
+        reclaimable_high_confidence_bytes=100_000_000,
+        reclaimable_review_required_bytes=0,
+        protected_bytes=0,
+        items=[],
+        top_consumers=[],
+    )
+    plan = CleanupPlan(
+        investigation_id="inv_det",
+        high_confidence_items=[],
+        total_reclaimable_bytes=100_000_000,
+    )
+    det_result = StorageInvestigationResult(
+        evidence=evidence,
+        cleanup_plan=plan,
+        summary_text="Deterministic summary",
+        is_ai_reasoned=False,
+    )
+
+    def mock_button(label, *args, **kwargs):
+        if "Investigate My Storage" in label:
+            return True
+        return False
+
+    with patch("streamlit.button", side_effect=mock_button), \
+         patch.object(StorageInvestigator, "investigate", return_value=(evidence, plan)), \
+         patch.object(OllamaStorageInvestigator, "investigate_deterministic", return_value=det_result) as mock_det, \
+         patch.object(OllamaStorageInvestigator, "investigate") as mock_ai:
+
+        render_storage_investigation_page()
+
+        assert mock_det.called
+        assert not mock_ai.called
+        assert st.session_state.investigation_result.is_ai_reasoned is False

@@ -55,7 +55,7 @@ def render_storage_investigation_page() -> None:
             ai_btn = st.button("🤖 **Investigate with Local AI**", use_container_width=True)
 
     # 2. Run Investigation if clicked
-    if run_btn or (ai_btn and st.session_state.investigation_result is None):
+    if run_btn or ai_btn:
         inv_level = InvestigationLevel.TARGETED
         if "HEALTH" in level_choice:
             inv_level = InvestigationLevel.HEALTH
